@@ -13,35 +13,35 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # Notifications & Scheduling
-  flutter_local_notifications: ^21.0.0
-  timezone: ^0.11.0
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
 
   # Text-to-Speech
-  flutter_tts: ^4.2.5
+  flutter_tts: ^4.2.2
 
   # Local Storage
-  shared_preferences: ^2.5.5
+  shared_preferences: ^2.5.2
 
   # Image Handling
-  image_picker: ^1.2.2
+  image_picker: ^1.1.2
   path_provider: ^2.1.5
 
   # Charts & UI
-  fl_chart: ^1.2.0
-  google_fonts: ^8.1.0
+  fl_chart: ^0.70.2
+  google_fonts: ^6.2.1
 
   # Permissions
-  permission_handler: ^12.0.2
+  permission_handler: ^11.3.1
 
   # Utilities
-  intl: ^0.20.2
+  intl: ^0.19.0
   uuid: ^4.5.1
-  flutter_timezone: ^5.1.0
+  flutter_timezone: ^3.0.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
