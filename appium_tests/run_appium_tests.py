@@ -90,7 +90,8 @@ def execute_all_appium_tests() -> None:
 
     print("✨ Report saved:")
     print(f"   📄 {paths['report_path']}")
-    print(f"   📄 {paths['latest_report_path']}\n")
+    print(f"   📄 {paths['latest_report_path']}")
+    print(f"   📊 {paths['json_path']}  ← used by the consolidated HTML report\n")
 
 
 if __name__ == "__main__":

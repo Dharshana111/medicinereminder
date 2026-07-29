@@ -1,8 +1,9 @@
 """
 MedCare+ Appium Excel Reporter (Python)
-Generates timestamped .xlsx reports mirroring appiumReporter.js.
+Generates timestamped .xlsx reports + JSON sidecar for the HTML report.
 """
 import os
+import json
 from datetime import datetime
 
 import openpyxl
@@ -27,7 +28,8 @@ def _style_header(ws, row_idx: int = 1) -> None:
 
 
 class AppiumExcelReporter:
-    """Generates an Excel workbook with Executive Summary + Detailed Results."""
+    """Generates an Excel workbook with Executive Summary + Detailed Results,
+    and a JSON sidecar consumed by the consolidated HTML report."""
 
     def generate_report(
         self,
@@ -36,7 +38,7 @@ class AppiumExcelReporter:
         platform: str = PLATFORM,
     ) -> dict[str, str]:
         """
-        Build and save the Excel report.
+        Build and save the Excel report + JSON sidecar.
 
         Parameters
         ----------
@@ -46,7 +48,7 @@ class AppiumExcelReporter:
 
         Returns
         -------
-        dict with keys 'report_path' and 'latest_report_path'.
+        dict with keys 'report_path', 'latest_report_path', and 'json_path'.
         """
         wb = openpyxl.Workbook()
 
@@ -65,7 +67,7 @@ class AppiumExcelReporter:
         duration = summary.get("durationMs", 0)
         pass_rate = f"{(passed / total * 100):.1f}%" if total > 0 else "0%"
 
-        rows = [
+        summary_rows = [
             ("Test Suite",          "MedCare+ Appium Mobile Tests"),
             ("Platform",            platform.upper()),
             ("Execution Date",      datetime.utcnow().isoformat()),
@@ -75,7 +77,7 @@ class AppiumExcelReporter:
             ("Pass Rate (%)",       pass_rate),
             ("Total Duration (s)",  f"{duration / 1000:.2f}"),
         ]
-        for row in rows:
+        for row in summary_rows:
             ws_summary.append(row)
 
         # ── Sheet 2: Detailed Results ─────────────────────────────────────────
@@ -84,7 +86,7 @@ class AppiumExcelReporter:
         headers    = ["#", "Test Suite", "Test Case", "Status",
                       "Duration (ms)", "Error / Notes", "Timestamp"]
 
-        for i, (col, width) in enumerate(zip("ABCDEFG", col_widths), start=1):
+        for col, width in zip("ABCDEFG", col_widths):
             ws_detail.column_dimensions[col].width = width
 
         ws_detail.append(headers)
@@ -105,13 +107,36 @@ class AppiumExcelReporter:
             status_cell.fill = _PASS_FILL if status == "PASS" else _FAIL_FILL
             status_cell.font = _WHITE_FONT
 
-        # ── Save ──────────────────────────────────────────────────────────────
+        # ── Save Excel files ──────────────────────────────────────────────────
         os.makedirs(REPORTS_DIR, exist_ok=True)
-        ts         = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
-        report_path  = os.path.join(REPORTS_DIR, f"Appium_{platform}_Report_{ts}.xlsx")
-        latest_path  = os.path.join(REPORTS_DIR, f"Appium_Latest_{platform}.xlsx")
+        ts          = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+        report_path = os.path.join(REPORTS_DIR, f"Appium_{platform}_Report_{ts}.xlsx")
+        latest_path = os.path.join(REPORTS_DIR, f"Appium_Latest_{platform}.xlsx")
 
         wb.save(report_path)
         wb.save(latest_path)
 
-        return {"report_path": report_path, "latest_report_path": latest_path}
+        # ── Save JSON sidecar (used by the consolidated HTML report) ─────────
+        # Stamp each result with the current platform so the HTML can group them.
+        stamped = [{**r, "platform": platform} for r in results]
+
+        # Merge with any existing sidecar from a previous platform run so that
+        # when 'both' platforms run, a single JSON file covers all results.
+        json_path = os.path.join(REPORTS_DIR, "appium_report_data.json")
+        existing: list[dict] = []
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, encoding="utf-8") as fh:
+                    existing = json.load(fh)
+            except Exception:  # noqa: BLE001
+                existing = []
+
+        merged = existing + stamped
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(merged, fh, indent=2, ensure_ascii=False)
+
+        return {
+            "report_path":        report_path,
+            "latest_report_path": latest_path,
+            "json_path":          json_path,
+        }
