@@ -69,7 +69,7 @@ class TimePickerChip extends StatelessWidget {
                 height: 20,
                 decoration: BoxDecoration(
                   color: filled
-                      ? Colors.white.withOpacity(0.25)
+                      ? Colors.white.withValues(alpha: 0.25)
                       : AppTheme.primarySurface,
                   shape: BoxShape.circle,
                 ),

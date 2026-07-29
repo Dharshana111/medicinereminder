@@ -304,7 +304,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
                       color: isSelected
-                          ? Colors.white.withOpacity(0.8)
+                          ? Colors.white.withValues(alpha: 0.8)
                           : AppTheme.textHint,
                     ),
                   ),
@@ -558,7 +558,7 @@ class _HistoryScreenState extends State<HistoryScreen>
               child: Icon(
                 Icons.event_note_rounded,
                 size: 48,
-                color: AppTheme.primaryLight.withOpacity(0.6),
+                color: AppTheme.primaryLight.withValues(alpha: 0.6),
               ),
             ),
             const SizedBox(height: AppTheme.spacingLg),

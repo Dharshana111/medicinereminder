@@ -241,7 +241,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: AppTheme.primary.withOpacity(0.3),
+                    color: AppTheme.primary.withValues(alpha: 0.3),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -474,7 +474,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         color: AppTheme.primarySurface,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(
-          color: AppTheme.primary.withOpacity(0.1),
+          color: AppTheme.primary.withValues(alpha: 0.1),
         ),
       ),
       child: Column(
@@ -491,7 +491,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: Icon(
               Icons.medication_liquid_rounded,
               size: 40,
-              color: AppTheme.primaryLight.withOpacity(0.7),
+              color: AppTheme.primaryLight.withValues(alpha: 0.7),
             ),
           ),
           const SizedBox(height: AppTheme.spacingMd),
