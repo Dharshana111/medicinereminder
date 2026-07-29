@@ -42,11 +42,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
           channel: 'stable'
           cache: true
       - run: flutter pub get
-      - run: flutter build web --release --dart-define=FLUTTER_WEB_USE_SKIA=true
+      - run: flutter build web --release
       - uses: actions/upload-artifact@v4
         with:
           name: flutter-web-build
@@ -118,6 +117,7 @@ jobs:
       status: ${{ job.status }}
     steps:
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: selenium-report-*
           path: selenium_reports/
@@ -141,7 +141,6 @@ jobs:
 # ══════════════════════════════════════════════════════════════════════
 # LOAD TESTS
 # ══════════════════════════════════════════════════════════════════════
-  # ── Build Flutter Web for load (reuse or separate) ─────────────────
   build-flutter-web-load:
     name: "🔨 Build Flutter Web (Load)"
     runs-on: ubuntu-latest
@@ -150,7 +149,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
           channel: 'stable'
           cache: true
       - run: flutter pub get
@@ -298,7 +296,7 @@ jobs:
           retention-days: 7
 
 # ══════════════════════════════════════════════════════════════════════
-# APPIUM TESTS  (Android — always; iOS — manual only)
+# APPIUM TESTS
 # ══════════════════════════════════════════════════════════════════════
   build-android:
     name: "🤖 Build Android APK"
@@ -312,7 +310,6 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
           channel: 'stable'
           cache: true
       - run: flutter pub get
@@ -403,7 +400,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
           channel: 'stable'
           cache: true
       - run: flutter pub get
@@ -484,21 +480,29 @@ jobs:
     needs: [selenium-summary, load-summary, appium-summary]
     if: always()
     steps:
+      - name: Prepare reports directory
+        run: mkdir -p all_reports
+
       - name: Download ALL artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: all_reports/
           merge-multiple: true
 
       - name: List collected files
-        run: find all_reports/ -type f | sort || echo "No files found"
+        run: |
+          mkdir -p all_reports
+          find all_reports/ -type f | sort || echo "No files found"
 
       - name: Parse Appium JSON sidecar (if present)
         id: appium_data
         run: |
+          mkdir -p all_reports
           APPIUM_JSON="[]"
-          if find all_reports/ -name "appium_report_data.json" | grep -q .; then
-            APPIUM_JSON=$(cat $(find all_reports/ -name "appium_report_data.json" | head -1))
+          SIDEFILE=$(find all_reports/ -name "appium_report_data.json" 2>/dev/null | head -1 || echo "")
+          if [ -n "$SIDEFILE" ] && [ -f "$SIDEFILE" ]; then
+            APPIUM_JSON=$(cat "$SIDEFILE")
           fi
           echo "APPIUM_JSON<<EOJSON" >> $GITHUB_ENV
           echo "$APPIUM_JSON" >> $GITHUB_ENV
@@ -507,9 +511,10 @@ jobs:
       - name: Parse Load smoke summary (if present)
         id: load_data
         run: |
+          mkdir -p all_reports
           AVG="N/A"; P95="N/A"; FAIL="N/A"; REQS="N/A"
-          JSON_FILE=$(find all_reports/ -name "load_smoke_summary.json" | head -1)
-          if [ -f "$JSON_FILE" ]; then
+          JSON_FILE=$(find all_reports/ -name "load_smoke_summary.json" 2>/dev/null | head -1 || echo "")
+          if [ -n "$JSON_FILE" ] && [ -f "$JSON_FILE" ]; then
             AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
             P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
             FAIL=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
@@ -522,14 +527,16 @@ jobs:
 
       - name: Count Excel report files
         run: |
-          SELENIUM_COUNT=$(find all_reports/ -name "*.xlsx" -path "*selenium*" | wc -l || echo 0)
-          APPIUM_COUNT=$(find all_reports/ -name "Appium_*.xlsx" | wc -l || echo 0)
+          mkdir -p all_reports
+          SELENIUM_COUNT=$(find all_reports/ -name "*.xlsx" -path "*selenium*" 2>/dev/null | wc -l || echo 0)
+          APPIUM_COUNT=$(find all_reports/ -name "Appium_*.xlsx" 2>/dev/null | wc -l || echo 0)
           echo "SELENIUM_COUNT=$SELENIUM_COUNT" >> $GITHUB_ENV
           echo "APPIUM_COUNT=$APPIUM_COUNT"     >> $GITHUB_ENV
 
       - name: Generate Unified HTML Report
         run: |
           mkdir -p unified_report
+          mkdir -p all_reports
 
           # ── Collect Excel download links ──────────────────────────────────
           SELENIUM_LINKS=""
@@ -540,26 +547,13 @@ jobs:
           for f in all_reports/Appium_*.xlsx; do
             [ -f "$f" ] && APPIUM_LINKS="$APPIUM_LINKS<li><a href=\"$(basename $f)\">📱 $(basename $f)</a></li>"
           done
-          [ -z "$SELENIUM_LINKS" ] && SELENIUM_LINKS="<li><em>No Selenium Excel reports (simulation/skip)</em></li>"
-          [ -z "$APPIUM_LINKS"   ] && APPIUM_LINKS="<li><em>No Appium Excel reports (simulation/skip)</em></li>"
+          [ -z "$SELENIUM_LINKS" ] && SELENIUM_LINKS="<li><em>No Selenium Excel reports</em></li>"
+          [ -z "$APPIUM_LINKS"   ] && APPIUM_LINKS="<li><em>No Appium Excel reports</em></li>"
 
           # ── Status helpers ────────────────────────────────────────────────
           SEL_STATUS="${{ needs.selenium-summary.result }}"
           LOAD_STATUS="${{ needs.load-summary.result }}"
           APP_STATUS="${{ needs.appium-summary.result }}"
-
-          status_badge() {
-            case "$1" in
-              success)  echo '<span class="badge badge-pass">✅ success</span>';;
-              failure)  echo '<span class="badge badge-fail">❌ failure</span>';;
-              skipped)  echo '<span class="badge badge-skip">⏭ skipped</span>';;
-              *)        echo "<span class=\"badge badge-warn\">⚠ $1</span>";;
-            esac
-          }
-
-          SEL_BADGE=$(status_badge "$SEL_STATUS")
-          LOAD_BADGE=$(status_badge "$LOAD_STATUS")
-          APP_BADGE=$(status_badge "$APP_STATUS")
 
           cat > unified_report/index.html << HTMLEOF
           <!DOCTYPE html>
@@ -578,7 +572,6 @@ jobs:
               }
               body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:2rem 1rem;}
 
-              /* ── Header ── */
               header{text-align:center;margin-bottom:3rem;}
               header h1{
                 font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;
@@ -590,7 +583,6 @@ jobs:
               .run-meta{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem 1.5rem;margin-top:.75rem;font-size:.8rem;color:var(--muted);}
               .run-meta b{color:#94a3b8;}
 
-              /* ── Suite status row ── */
               .suite-status-row{
                 display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;
                 max-width:900px;margin:0 auto 2.5rem;
@@ -609,14 +601,12 @@ jobs:
               .suite-card h2{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:.5rem;}
               .suite-card .sub{font-size:.75rem;color:var(--muted);}
 
-              /* ── Badges ── */
               .badge{display:inline-block;font-size:.7rem;padding:.2rem .6rem;border-radius:999px;font-weight:700;}
               .badge-pass{background:#14532d;color:#4ade80;}
               .badge-fail{background:#450a0a;color:#f87171;}
               .badge-skip{background:#1e293b;color:#94a3b8;border:1px solid var(--border);}
               .badge-warn{background:#451a03;color:#fbbf24;}
 
-              /* ── Stat cards ── */
               .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;max-width:900px;margin:0 auto 2.5rem;}
               .stat{background:var(--surface);border-radius:12px;padding:1.1rem;border:1px solid var(--border);text-align:center;transition:transform .2s;}
               .stat:hover{transform:translateY(-3px);}
@@ -628,7 +618,6 @@ jobs:
               .yellow .val{color:var(--yellow);}
               .purple .val{color:var(--purple);}
 
-              /* ── Section headers ── */
               .section{max-width:900px;margin:0 auto 2rem;}
               .section-title{
                 display:flex;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:700;
@@ -636,7 +625,6 @@ jobs:
                 border-bottom:1px solid var(--border);
               }
 
-              /* ── Accordion ── */
               .accordion{display:flex;flex-direction:column;gap:.75rem;}
               .acc-item{background:var(--surface);border-radius:12px;border:1px solid var(--border);overflow:hidden;}
               .acc-header{
@@ -650,7 +638,6 @@ jobs:
               .acc-body{display:none;border-top:1px solid var(--border);}
               .acc-item.open .acc-body{display:block;}
 
-              /* ── Table ── */
               table{width:100%;border-collapse:collapse;font-size:.82rem;}
               th{background:#0f172a;color:#94a3b8;padding:.6rem 1rem;text-align:left;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;}
               td{padding:.65rem 1rem;border-top:1px solid var(--border);color:#cbd5e1;vertical-align:top;}
@@ -660,13 +647,11 @@ jobs:
               .sim{color:#fbbf24;font-weight:600;}
               .err{color:#fb923c;font-size:.75rem;font-style:italic;word-break:break-word;max-width:360px;}
 
-              /* ── Load metrics table ── */
               .metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;padding:1rem 1.25rem;}
               .metric-cell{background:var(--surface2);border-radius:8px;padding:.75rem 1rem;}
               .metric-cell .m-val{font-size:1.4rem;font-weight:700;color:var(--blue);}
               .metric-cell .m-lbl{font-size:.72rem;color:var(--muted);margin-top:.15rem;}
 
-              /* ── Downloads ── */
               .downloads{max-width:900px;margin:0 auto 2rem;background:var(--surface);border-radius:12px;padding:1.25rem 1.5rem;border:1px solid var(--border);}
               .downloads h3{font-size:1rem;font-weight:600;margin-bottom:.75rem;}
               .dl-cols{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
@@ -679,14 +664,12 @@ jobs:
               }
               .dl-cols li a:hover{background:rgba(96,165,250,.1);}
 
-              /* ── Footer ── */
               footer{text-align:center;margin-top:3rem;color:var(--muted);font-size:.75rem;}
               a.gh{color:var(--blue);}
             </style>
           </head>
           <body>
 
-            <!-- ══ Header ══ -->
             <header>
               <h1>🚀 MedCare+ Unified CI Report</h1>
               <p>Appium &nbsp;·&nbsp; Selenium &nbsp;·&nbsp; Load &amp; Performance &nbsp;·&nbsp; All suites in one view</p>
@@ -698,26 +681,24 @@ jobs:
               </div>
             </header>
 
-            <!-- ══ Suite Status Cards ══ -->
             <div class="suite-status-row">
               <div class="suite-card selenium">
                 <h2>🌐 Selenium</h2>
-                <div>$SEL_BADGE</div>
+                <div><span class="badge badge-pass">${SEL_STATUS}</span></div>
                 <div class="sub">6 suites &nbsp;·&nbsp; browser: ${{ inputs.browser || 'chrome' }}</div>
               </div>
               <div class="suite-card load">
                 <h2>⚡ Load &amp; Performance</h2>
-                <div>$LOAD_BADGE</div>
+                <div><span class="badge badge-pass">${LOAD_STATUS}</span></div>
                 <div class="sub">smoke · load · stress &nbsp;·&nbsp; k6</div>
               </div>
               <div class="suite-card appium">
                 <h2>📱 Appium Mobile</h2>
-                <div>$APP_BADGE</div>
+                <div><span class="badge badge-pass">${APP_STATUS}</span></div>
                 <div class="sub">platform: ${{ inputs.appium_platform || 'android' }} &nbsp;·&nbsp; Python</div>
               </div>
             </div>
 
-            <!-- ══ Appium Test Results (live from JSON) ══ -->
             <div class="section">
               <div class="section-title">📱 Appium Mobile Test Results</div>
               <div class="accordion" id="appiumAccordion">
@@ -725,7 +706,6 @@ jobs:
               </div>
             </div>
 
-            <!-- ══ Selenium Overview ══ -->
             <div class="section">
               <div class="section-title">🌐 Selenium Web Test Suites</div>
               <div class="accordion">
@@ -738,12 +718,12 @@ jobs:
                     <table>
                       <thead><tr><th>Suite</th><th>Description</th><th>Status</th></tr></thead>
                       <tbody>
-                        <tr><td>functional</td><td>Core app functionality tests</td><td class="sim">$SEL_STATUS</td></tr>
-                        <tr><td>ui-ux-compatibility</td><td>UI & cross-browser tests</td><td class="sim">$SEL_STATUS</td></tr>
-                        <tr><td>performance-security</td><td>Page speed & security headers</td><td class="sim">$SEL_STATUS</td></tr>
-                        <tr><td>api-database</td><td>API integration tests</td><td class="sim">$SEL_STATUS</td></tr>
-                        <tr><td>accessibility-mobile</td><td>a11y & responsive tests</td><td class="sim">$SEL_STATUS</td></tr>
-                        <tr><td>regression-e2e</td><td>End-to-end regression suite</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>functional</td><td>Core app functionality tests</td><td class="sim">${SEL_STATUS}</td></tr>
+                        <tr><td>ui-ux-compatibility</td><td>UI & cross-browser tests</td><td class="sim">${SEL_STATUS}</td></tr>
+                        <tr><td>performance-security</td><td>Page speed & security headers</td><td class="sim">${SEL_STATUS}</td></tr>
+                        <tr><td>api-database</td><td>API integration tests</td><td class="sim">${SEL_STATUS}</td></tr>
+                        <tr><td>accessibility-mobile</td><td>a11y & responsive tests</td><td class="sim">${SEL_STATUS}</td></tr>
+                        <tr><td>regression-e2e</td><td>End-to-end regression suite</td><td class="sim">${SEL_STATUS}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -751,7 +731,6 @@ jobs:
               </div>
             </div>
 
-            <!-- ══ Load Test Metrics ══ -->
             <div class="section">
               <div class="section-title">⚡ Load &amp; Performance Metrics</div>
               <div class="acc-item open" style="border-radius:12px;border:1px solid var(--border);background:var(--surface);">
@@ -778,14 +757,10 @@ jobs:
                       <div class="m-lbl">Failure Rate</div>
                     </div>
                   </div>
-                  <p style="padding:.75rem 1.25rem;font-size:.75rem;color:var(--muted);">
-                    Full load and stress results are available in the downloaded HTML report artifacts.
-                  </p>
                 </div>
               </div>
             </div>
 
-            <!-- ══ Downloads ══ -->
             <div class="downloads">
               <h3>📥 Download Detailed Reports</h3>
               <div class="dl-cols">
@@ -812,7 +787,6 @@ jobs:
               </a>
             </footer>
 
-            <!-- ══ Appium live data script ══ -->
             <script>
             const RAW_DATA = ${{ toJSON(env.APPIUM_JSON) }};
             let results = [];
@@ -822,15 +796,13 @@ jobs:
             container.innerHTML = '';
 
             if (!results || !results.length) {
-              container.innerHTML = '<p style="color:var(--muted);padding:.75rem">No Appium JSON sidecar found — download the Excel artifacts for detailed results.</p>';
+              container.innerHTML = '<p style="color:var(--muted);padding:.75rem">No Appium JSON sidecar found.</p>';
             } else {
-              // aggregate stats
               const total  = results.length;
               const passed = results.filter(r => r.status === 'PASS').length;
               const failed = results.filter(r => r.status === 'FAIL').length;
               const rate   = total ? ((passed/total)*100).toFixed(1)+'%' : '—';
 
-              // stat bar
               const bar = document.createElement('div');
               bar.className = 'stats';
               bar.style.marginBottom = '1rem';
@@ -842,7 +814,6 @@ jobs:
               ].map(([l,v,c]) => `<div class="stat ${c}"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
               container.appendChild(bar);
 
-              // group by platform + suite
               const grouped = {};
               results.forEach(r => {
                 const key = (r.platform || 'android') + '::' + r.suiteName;
@@ -888,7 +859,6 @@ jobs:
 
           echo "✅ Unified HTML report generated → unified_report/index.html"
 
-          # Copy all collected files into unified_report for single download
           cp all_reports/*.xlsx unified_report/ 2>/dev/null || true
           cp all_reports/appium_report_data.json unified_report/ 2>/dev/null || true
           cp all_reports/load_smoke_summary.json unified_report/ 2>/dev/null || true
@@ -909,22 +879,13 @@ jobs:
           LOAD="${{ needs.load-summary.result }}"
           APP="${{ needs.appium-summary.result }}"
 
-          badge() {
-            case "$1" in
-              success) echo "✅";;
-              failure) echo "❌";;
-              skipped) echo "⏭";;
-              *)       echo "⚠";;
-            esac
-          }
-
           echo "# 🚀 MedCare+ Full CI Report"                                   >> $GITHUB_STEP_SUMMARY
           echo ""                                                                 >> $GITHUB_STEP_SUMMARY
           echo "| Test Suite | Status | Details |"                               >> $GITHUB_STEP_SUMMARY
           echo "|------------|--------|---------|"                               >> $GITHUB_STEP_SUMMARY
-          echo "| 🌐 **Selenium** | $(badge $SEL) \`$SEL\` | 6 suites · browser: ${{ inputs.browser || 'chrome' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⚡ **Load & Performance** | $(badge $LOAD) \`$LOAD\` | smoke · load · stress · k6 |"               >> $GITHUB_STEP_SUMMARY
-          echo "| 📱 **Appium Mobile** | $(badge $APP) \`$APP\` | platform: ${{ inputs.appium_platform || 'android' }} · Python |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 **Selenium** | \`$SEL\` | 6 suites · browser: ${{ inputs.browser || 'chrome' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ **Load & Performance** | \`$LOAD\` | smoke · load · stress · k6 |"               >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 **Appium Mobile** | \`$APP\` | platform: ${{ inputs.appium_platform || 'android' }} · Python |" >> $GITHUB_STEP_SUMMARY
           echo ""                                                                 >> $GITHUB_STEP_SUMMARY
           echo "| Meta | Value |"                                                 >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|"                                                 >> $GITHUB_STEP_SUMMARY
