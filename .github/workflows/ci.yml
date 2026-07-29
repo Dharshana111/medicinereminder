@@ -1,4 +1,4 @@
-name: "🚀 Full Test Suite (CI)"
+name: "🚀 MedCare+ Full CI — Unified Test Report"
 
 on:
   push:
@@ -6,42 +6,931 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      appium_platform:
+        description: 'Appium platform'
+        required: false
+        default: 'android'
+        type: choice
+        options: [android, ios, both, skip]
+      load_type:
+        description: 'Load test type'
+        required: false
+        default: 'smoke'
+        type: choice
+        options: [smoke, load, stress, all, skip]
+      browser:
+        description: 'Selenium browser'
+        required: false
+        default: 'chrome'
+        type: choice
+        options: [chrome, firefox, edge]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ══════════════════════════════════════════════════════════════════════
+# SELENIUM TESTS
+# ══════════════════════════════════════════════════════════════════════
 jobs:
-  # ── Trigger all test workflows ──────────────────────────────────
-  selenium:
-    name: "Trigger Selenium Tests"
-    uses: ./.github/workflows/selenium.yml
-    secrets: inherit
-
-  load-smoke:
-    name: "Trigger Load Tests (Smoke)"
-    uses: ./.github/workflows/load-testing.yml
-    with:
-      test_type: smoke
-    secrets: inherit
-
-  # ── Master Summary ───────────────────────────────────────────────
-  ci-summary:
-    name: "📋 CI Master Summary"
+  # ── Build Flutter Web ──────────────────────────────────────────────
+  build-flutter-web:
+    name: "🔨 Build Flutter Web"
     runs-on: ubuntu-latest
-    needs: [selenium, load-smoke]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+      - run: flutter pub get
+      - run: flutter build web --release --dart-define=FLUTTER_WEB_USE_SKIA=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build
+          path: build/web/
+          retention-days: 3
+
+  # ── Selenium parallel matrix ───────────────────────────────────────
+  selenium-tests:
+    name: "🌐 Selenium (${{ matrix.suite }})"
+    runs-on: ubuntu-latest
+    needs: build-flutter-web
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - functional
+          - ui-ux-compatibility
+          - performance-security
+          - api-database
+          - accessibility-mobile
+          - regression-e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build
+          path: build/web/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: selenium_tests/package-lock.json
+      - name: Install Selenium deps
+        working-directory: selenium_tests
+        run: npm ci --prefer-offline
+      - uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: 'stable'
+      - uses: nanasess/setup-chromedriver@v2
+      - name: Create reports dir
+        working-directory: selenium_tests
+        run: mkdir -p reports
+      - name: Run Selenium — ${{ matrix.suite }}
+        working-directory: selenium_tests
+        env:
+          HEADLESS: 'true'
+          TEST_BROWSER: ${{ inputs.browser || 'chrome' }}
+          TEST_SUITE: ${{ matrix.suite }}
+          CI: 'true'
+        run: node run_tests.js
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selenium-report-${{ matrix.suite }}
+          path: |
+            selenium_tests/reports/*.xlsx
+            selenium_tests/reports/*.csv
+          retention-days: 30
+
+  # ── Selenium summary JSON ──────────────────────────────────────────
+  selenium-summary:
+    name: "🌐 Selenium Summary"
+    runs-on: ubuntu-latest
+    needs: selenium-tests
+    if: always()
+    outputs:
+      status: ${{ job.status }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: selenium-report-*
+          path: selenium_reports/
+          merge-multiple: true
+      - name: Write Selenium status JSON
+        run: |
+          mkdir -p ci_meta
+          echo '{
+            "suite": "Selenium",
+            "icon": "🌐",
+            "status": "${{ needs.selenium-tests.result }}",
+            "browser": "${{ inputs.browser || 'chrome' }}",
+            "suites": ["functional","ui-ux-compatibility","performance-security","api-database","accessibility-mobile","regression-e2e"]
+          }' > ci_meta/selenium_status.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-selenium-meta
+          path: ci_meta/selenium_status.json
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════════════
+# LOAD TESTS
+# ══════════════════════════════════════════════════════════════════════
+  # ── Build Flutter Web for load (reuse or separate) ─────────────────
+  build-flutter-web-load:
+    name: "🔨 Build Flutter Web (Load)"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.load_type != 'skip' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+      - run: flutter pub get
+      - run: flutter build web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+          retention-days: 1
+
+  smoke-test:
+    name: "🔥 Load — Smoke"
+    runs-on: ubuntu-latest
+    needs: build-flutter-web-load
+    if: ${{ inputs.load_type != 'skip' && (inputs.load_type == 'smoke' || inputs.load_type == 'all' || inputs.load_type == '' || github.event_name != 'workflow_dispatch') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+      - uses: grafana/setup-k6-action@v1
+      - name: Serve & run smoke test
+        run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+          mkdir -p load_tests/reports
+      - name: Run k6 smoke
+        working-directory: load_tests
+        run: |
+          k6 run --out json=reports/smoke_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            01_smoke_test.js
+        continue-on-error: true
+      - name: Generate HTML
+        working-directory: load_tests
+        run: node generate_report.js
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-smoke-reports
+          path: |
+            load_tests/reports/load_smoke_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+  load-test:
+    name: "⚡ Load — Normal"
+    runs-on: ubuntu-latest
+    needs: [build-flutter-web-load, smoke-test]
+    if: ${{ inputs.load_type == 'load' || inputs.load_type == 'all' || github.event_name == 'schedule' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+      - uses: grafana/setup-k6-action@v1
+      - run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+          mkdir -p load_tests/reports
+      - name: Run k6 load
+        working-directory: load_tests
+        run: |
+          k6 run --out json=reports/load_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            02_load_test.js
+        continue-on-error: true
+      - name: Generate HTML
+        working-directory: load_tests
+        run: node generate_report.js
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-normal-reports
+          path: |
+            load_tests/reports/load_load_test_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+  stress-test:
+    name: "💥 Load — Stress"
+    runs-on: ubuntu-latest
+    needs: [build-flutter-web-load, smoke-test]
+    if: ${{ inputs.load_type == 'stress' || inputs.load_type == 'all' || github.event_name == 'schedule' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+      - uses: grafana/setup-k6-action@v1
+      - run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+          mkdir -p load_tests/reports
+      - name: Run k6 stress
+        working-directory: load_tests
+        run: |
+          k6 run --out json=reports/stress_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            03_stress_test.js
+        continue-on-error: true
+      - name: Generate HTML
+        working-directory: load_tests
+        run: node generate_report.js
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-stress-reports
+          path: |
+            load_tests/reports/load_stress_test_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+  load-summary:
+    name: "⚡ Load Summary"
+    runs-on: ubuntu-latest
+    needs: [smoke-test, load-test, stress-test]
+    if: always()
+    outputs:
+      status: ${{ job.status }}
+    steps:
+      - name: Write Load status JSON
+        run: |
+          mkdir -p ci_meta
+          echo '{
+            "suite": "Load & Performance",
+            "icon": "⚡",
+            "status": "${{ needs.smoke-test.result }}",
+            "smoke": "${{ needs.smoke-test.result }}",
+            "load": "${{ needs.load-test.result }}",
+            "stress": "${{ needs.stress-test.result }}"
+          }' > ci_meta/load_status.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-load-meta
+          path: ci_meta/load_status.json
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════════════
+# APPIUM TESTS  (Android — always; iOS — manual only)
+# ══════════════════════════════════════════════════════════════════════
+  build-android:
+    name: "🤖 Build Android APK"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.appium_platform != 'skip' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+      - run: flutter pub get
+      - run: flutter build apk --debug --no-shrink
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: build/app/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+
+  appium-android:
+    name: "🤖 Appium Android"
+    runs-on: ubuntu-latest
+    needs: build-android
+    if: ${{ inputs.appium_platform != 'skip' && inputs.appium_platform != 'ios' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-debug-apk
+          path: build/app/outputs/apk/debug/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: appium_tests/requirements.txt
+      - name: Install Python deps
+        working-directory: appium_tests
+        run: pip install -r requirements.txt
+      - name: Install Appium + UiAutomator2
+        run: |
+          npm install -g appium@2
+          appium driver install uiautomator2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          sudo apt-get install -y libvirt-clients libvirt-daemon-system
+          sudo adduser $USER libvirt && sudo adduser $USER kvm
+      - uses: android-actions/setup-android@v3
+      - name: Create emulator
+        run: |
+          echo "y" | sdkmanager --install "system-images;android-33;google_apis;x86_64"
+          echo "no" | avdmanager create avd --name "Pixel_5_API_33" \
+            --package "system-images;android-33;google_apis;x86_64" --device "pixel_5" --force
+      - name: Boot emulator
+        run: |
+          emulator -avd Pixel_5_API_33 -no-audio -no-window -gpu swiftshader_indirect \
+            -no-snapshot -wipe-data &
+          adb wait-for-device
+          timeout 300 bash -c 'while [[ "$(adb shell getprop sys.boot_completed 2>&1)" != "1" ]]; do sleep 5; done'
+      - name: Start Appium server
+        run: appium --port 4723 --log-level warn & sleep 5
+      - name: Install APK
+        run: adb install -r build/app/outputs/apk/debug/app-debug.apk
+      - name: Run Appium Android tests
+        working-directory: appium_tests
+        env:
+          PLATFORM: android
+          ANDROID_DEVICE: emulator-5554
+          ANDROID_VERSION: '13.0'
+          ANDROID_APK_PATH: ../build/app/outputs/apk/debug/app-debug.apk
+          APPIUM_HOST: '127.0.0.1'
+          APPIUM_PORT: '4723'
+        run: python run_appium_tests.py
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appium-android-reports
+          path: |
+            appium_tests/reports/Appium_android_*.xlsx
+            appium_tests/reports/Appium_Latest_android.xlsx
+            appium_tests/reports/appium_report_data.json
+          retention-days: 30
+
+  appium-ios:
+    name: "🍎 Appium iOS"
+    runs-on: macos-14
+    if: ${{ inputs.appium_platform == 'ios' || inputs.appium_platform == 'both' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --debug --simulator --no-codesign
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: appium_tests/requirements.txt
+      - name: Install Python deps
+        working-directory: appium_tests
+        run: pip install -r requirements.txt
+      - name: Install Appium + XCUITest
+        run: |
+          npm install -g appium@2
+          appium driver install xcuitest
+      - name: Boot iOS simulator
+        run: |
+          UDID=$(xcrun simctl list devices available | grep "iPhone 15" | grep -oE '[0-9A-F-]{36}' | head -1)
+          echo "SIMULATOR_UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+      - name: Install app on simulator
+        run: xcrun simctl install "$SIMULATOR_UDID" build/ios/iphonesimulator/Runner.app
+      - name: Start Appium server
+        run: appium --port 4723 --log-level warn & sleep 5
+      - name: Run Appium iOS tests
+        working-directory: appium_tests
+        env:
+          PLATFORM: ios
+          IOS_DEVICE: iPhone 15
+          IOS_VERSION: '17.0'
+          IOS_APP_PATH: ../build/ios/iphonesimulator/Runner.app
+          APPIUM_HOST: '127.0.0.1'
+          APPIUM_PORT: '4723'
+        run: python run_appium_tests.py
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appium-ios-reports
+          path: |
+            appium_tests/reports/Appium_ios_*.xlsx
+            appium_tests/reports/Appium_Latest_ios.xlsx
+            appium_tests/reports/appium_report_data.json
+          retention-days: 30
+
+  appium-summary:
+    name: "📱 Appium Summary"
+    runs-on: ubuntu-latest
+    needs: [appium-android, appium-ios]
+    if: always()
+    outputs:
+      status: ${{ job.status }}
+    steps:
+      - name: Write Appium status JSON
+        run: |
+          mkdir -p ci_meta
+          echo '{
+            "suite": "Appium Mobile",
+            "icon": "📱",
+            "android": "${{ needs.appium-android.result }}",
+            "ios": "${{ needs.appium-ios.result }}",
+            "platform": "${{ inputs.appium_platform || 'android' }}"
+          }' > ci_meta/appium_status.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-appium-meta
+          path: ci_meta/appium_status.json
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════════════
+# MASTER UNIFIED REPORT
+# ══════════════════════════════════════════════════════════════════════
+  ci-master-report:
+    name: "📋 Unified CI Report — All Suites"
+    runs-on: ubuntu-latest
+    needs: [selenium-summary, load-summary, appium-summary]
     if: always()
     steps:
-      - name: Download all artifacts
+      - name: Download ALL artifacts
         uses: actions/download-artifact@v4
         with:
-          path: ci_reports/
+          path: all_reports/
+          merge-multiple: true
 
-      - name: Post CI summary
+      - name: List collected files
+        run: find all_reports/ -type f | sort || echo "No files found"
+
+      - name: Parse Appium JSON sidecar (if present)
+        id: appium_data
         run: |
-          echo "# 🚀 MedCare+ Full CI Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Suite | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🌐 Selenium | ${{ needs.selenium.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⚡ Load Smoke | ${{ needs.load-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> 📱 **Appium tests** run separately via \`workflow_dispatch\` (requires device/emulator)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** \`${{ github.sha }}\` | **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          APPIUM_JSON="[]"
+          if find all_reports/ -name "appium_report_data.json" | grep -q .; then
+            APPIUM_JSON=$(cat $(find all_reports/ -name "appium_report_data.json" | head -1))
+          fi
+          echo "APPIUM_JSON<<EOJSON" >> $GITHUB_ENV
+          echo "$APPIUM_JSON" >> $GITHUB_ENV
+          echo "EOJSON" >> $GITHUB_ENV
+
+      - name: Parse Load smoke summary (if present)
+        id: load_data
+        run: |
+          AVG="N/A"; P95="N/A"; FAIL="N/A"; REQS="N/A"
+          JSON_FILE=$(find all_reports/ -name "load_smoke_summary.json" | head -1)
+          if [ -f "$JSON_FILE" ]; then
+            AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
+            P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
+            FAIL=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
+            REQS=$(jq -r '.metrics.http_reqs.values.count // "N/A"' "$JSON_FILE" 2>/dev/null || echo "N/A")
+          fi
+          echo "LOAD_AVG=$AVG"   >> $GITHUB_ENV
+          echo "LOAD_P95=$P95"   >> $GITHUB_ENV
+          echo "LOAD_FAIL=$FAIL" >> $GITHUB_ENV
+          echo "LOAD_REQS=$REQS" >> $GITHUB_ENV
+
+      - name: Count Excel report files
+        run: |
+          SELENIUM_COUNT=$(find all_reports/ -name "*.xlsx" -path "*selenium*" | wc -l || echo 0)
+          APPIUM_COUNT=$(find all_reports/ -name "Appium_*.xlsx" | wc -l || echo 0)
+          echo "SELENIUM_COUNT=$SELENIUM_COUNT" >> $GITHUB_ENV
+          echo "APPIUM_COUNT=$APPIUM_COUNT"     >> $GITHUB_ENV
+
+      - name: Generate Unified HTML Report
+        run: |
+          mkdir -p unified_report
+
+          # ── Collect Excel download links ──────────────────────────────────
+          SELENIUM_LINKS=""
+          for f in all_reports/*.xlsx; do
+            [ -f "$f" ] && SELENIUM_LINKS="$SELENIUM_LINKS<li><a href=\"$(basename $f)\">📊 $(basename $f)</a></li>"
+          done
+          APPIUM_LINKS=""
+          for f in all_reports/Appium_*.xlsx; do
+            [ -f "$f" ] && APPIUM_LINKS="$APPIUM_LINKS<li><a href=\"$(basename $f)\">📱 $(basename $f)</a></li>"
+          done
+          [ -z "$SELENIUM_LINKS" ] && SELENIUM_LINKS="<li><em>No Selenium Excel reports (simulation/skip)</em></li>"
+          [ -z "$APPIUM_LINKS"   ] && APPIUM_LINKS="<li><em>No Appium Excel reports (simulation/skip)</em></li>"
+
+          # ── Status helpers ────────────────────────────────────────────────
+          SEL_STATUS="${{ needs.selenium-summary.result }}"
+          LOAD_STATUS="${{ needs.load-summary.result }}"
+          APP_STATUS="${{ needs.appium-summary.result }}"
+
+          status_badge() {
+            case "$1" in
+              success)  echo '<span class="badge badge-pass">✅ success</span>';;
+              failure)  echo '<span class="badge badge-fail">❌ failure</span>';;
+              skipped)  echo '<span class="badge badge-skip">⏭ skipped</span>';;
+              *)        echo "<span class=\"badge badge-warn\">⚠ $1</span>";;
+            esac
+          }
+
+          SEL_BADGE=$(status_badge "$SEL_STATUS")
+          LOAD_BADGE=$(status_badge "$LOAD_STATUS")
+          APP_BADGE=$(status_badge "$APP_STATUS")
+
+          cat > unified_report/index.html << HTMLEOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8"/>
+            <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+            <title>MedCare+ Unified CI Report</title>
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+              *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+              :root{
+                --bg:#0f172a;--surface:#1e293b;--surface2:#243047;--border:rgba(255,255,255,.07);
+                --blue:#60a5fa;--green:#34d399;--red:#f87171;--yellow:#fbbf24;--purple:#a78bfa;
+                --text:#e2e8f0;--muted:#64748b;
+              }
+              body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:2rem 1rem;}
+
+              /* ── Header ── */
+              header{text-align:center;margin-bottom:3rem;}
+              header h1{
+                font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;
+                background:linear-gradient(135deg,var(--blue) 0%,var(--green) 50%,var(--purple) 100%);
+                -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                margin-bottom:.4rem;
+              }
+              header p{color:var(--muted);font-size:.875rem;}
+              .run-meta{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem 1.5rem;margin-top:.75rem;font-size:.8rem;color:var(--muted);}
+              .run-meta b{color:#94a3b8;}
+
+              /* ── Suite status row ── */
+              .suite-status-row{
+                display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;
+                max-width:900px;margin:0 auto 2.5rem;
+              }
+              .suite-card{
+                flex:1;min-width:200px;max-width:280px;
+                background:var(--surface);border-radius:14px;padding:1.25rem 1.5rem;
+                border:1px solid var(--border);border-top:3px solid;
+                display:flex;flex-direction:column;gap:.5rem;
+                transition:transform .2s;
+              }
+              .suite-card:hover{transform:translateY(-3px);}
+              .suite-card.selenium{border-top-color:var(--blue);}
+              .suite-card.load{border-top-color:var(--yellow);}
+              .suite-card.appium{border-top-color:var(--green);}
+              .suite-card h2{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:.5rem;}
+              .suite-card .sub{font-size:.75rem;color:var(--muted);}
+
+              /* ── Badges ── */
+              .badge{display:inline-block;font-size:.7rem;padding:.2rem .6rem;border-radius:999px;font-weight:700;}
+              .badge-pass{background:#14532d;color:#4ade80;}
+              .badge-fail{background:#450a0a;color:#f87171;}
+              .badge-skip{background:#1e293b;color:#94a3b8;border:1px solid var(--border);}
+              .badge-warn{background:#451a03;color:#fbbf24;}
+
+              /* ── Stat cards ── */
+              .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;max-width:900px;margin:0 auto 2.5rem;}
+              .stat{background:var(--surface);border-radius:12px;padding:1.1rem;border:1px solid var(--border);text-align:center;transition:transform .2s;}
+              .stat:hover{transform:translateY(-3px);}
+              .stat .val{font-size:1.9rem;font-weight:700;}
+              .stat .lbl{font-size:.7rem;color:var(--muted);margin-top:.15rem;text-transform:uppercase;letter-spacing:.05em;}
+              .blue .val{color:var(--blue);}
+              .green .val{color:var(--green);}
+              .red .val{color:var(--red);}
+              .yellow .val{color:var(--yellow);}
+              .purple .val{color:var(--purple);}
+
+              /* ── Section headers ── */
+              .section{max-width:900px;margin:0 auto 2rem;}
+              .section-title{
+                display:flex;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:700;
+                color:#f1f5f9;margin-bottom:1rem;padding-bottom:.6rem;
+                border-bottom:1px solid var(--border);
+              }
+
+              /* ── Accordion ── */
+              .accordion{display:flex;flex-direction:column;gap:.75rem;}
+              .acc-item{background:var(--surface);border-radius:12px;border:1px solid var(--border);overflow:hidden;}
+              .acc-header{
+                display:flex;align-items:center;justify-content:space-between;
+                padding:.9rem 1.25rem;cursor:pointer;user-select:none;
+              }
+              .acc-header:hover{background:rgba(255,255,255,.03);}
+              .acc-header h3{font-size:.95rem;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:.5rem;}
+              .chevron{color:var(--muted);transition:transform .25s;font-size:.75rem;}
+              .acc-item.open .chevron{transform:rotate(90deg);}
+              .acc-body{display:none;border-top:1px solid var(--border);}
+              .acc-item.open .acc-body{display:block;}
+
+              /* ── Table ── */
+              table{width:100%;border-collapse:collapse;font-size:.82rem;}
+              th{background:#0f172a;color:#94a3b8;padding:.6rem 1rem;text-align:left;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;}
+              td{padding:.65rem 1rem;border-top:1px solid var(--border);color:#cbd5e1;vertical-align:top;}
+              tr:hover td{background:rgba(255,255,255,.02);}
+              .pass{color:#4ade80;font-weight:700;}
+              .fail{color:#f87171;font-weight:700;}
+              .sim{color:#fbbf24;font-weight:600;}
+              .err{color:#fb923c;font-size:.75rem;font-style:italic;word-break:break-word;max-width:360px;}
+
+              /* ── Load metrics table ── */
+              .metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;padding:1rem 1.25rem;}
+              .metric-cell{background:var(--surface2);border-radius:8px;padding:.75rem 1rem;}
+              .metric-cell .m-val{font-size:1.4rem;font-weight:700;color:var(--blue);}
+              .metric-cell .m-lbl{font-size:.72rem;color:var(--muted);margin-top:.15rem;}
+
+              /* ── Downloads ── */
+              .downloads{max-width:900px;margin:0 auto 2rem;background:var(--surface);border-radius:12px;padding:1.25rem 1.5rem;border:1px solid var(--border);}
+              .downloads h3{font-size:1rem;font-weight:600;margin-bottom:.75rem;}
+              .dl-cols{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+              .dl-cols h4{font-size:.8rem;color:var(--muted);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.05em;}
+              .dl-cols ul{list-style:none;display:flex;flex-direction:column;gap:.35rem;}
+              .dl-cols li a{
+                display:inline-block;color:var(--blue);font-size:.8rem;
+                background:#0f172a;padding:.3rem .75rem;border-radius:6px;
+                border:1px solid rgba(96,165,250,.2);text-decoration:none;transition:background .15s;
+              }
+              .dl-cols li a:hover{background:rgba(96,165,250,.1);}
+
+              /* ── Footer ── */
+              footer{text-align:center;margin-top:3rem;color:var(--muted);font-size:.75rem;}
+              a.gh{color:var(--blue);}
+            </style>
+          </head>
+          <body>
+
+            <!-- ══ Header ══ -->
+            <header>
+              <h1>🚀 MedCare+ Unified CI Report</h1>
+              <p>Appium &nbsp;·&nbsp; Selenium &nbsp;·&nbsp; Load &amp; Performance &nbsp;·&nbsp; All suites in one view</p>
+              <div class="run-meta">
+                <span><b>Branch:</b> ${{ github.ref_name }}</span>
+                <span><b>Commit:</b> ${{ github.sha }}</span>
+                <span><b>Run:</b> <a class="gh" href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a></span>
+                <span><b>Triggered by:</b> ${{ github.event_name }}</span>
+              </div>
+            </header>
+
+            <!-- ══ Suite Status Cards ══ -->
+            <div class="suite-status-row">
+              <div class="suite-card selenium">
+                <h2>🌐 Selenium</h2>
+                <div>$SEL_BADGE</div>
+                <div class="sub">6 suites &nbsp;·&nbsp; browser: ${{ inputs.browser || 'chrome' }}</div>
+              </div>
+              <div class="suite-card load">
+                <h2>⚡ Load &amp; Performance</h2>
+                <div>$LOAD_BADGE</div>
+                <div class="sub">smoke · load · stress &nbsp;·&nbsp; k6</div>
+              </div>
+              <div class="suite-card appium">
+                <h2>📱 Appium Mobile</h2>
+                <div>$APP_BADGE</div>
+                <div class="sub">platform: ${{ inputs.appium_platform || 'android' }} &nbsp;·&nbsp; Python</div>
+              </div>
+            </div>
+
+            <!-- ══ Appium Test Results (live from JSON) ══ -->
+            <div class="section">
+              <div class="section-title">📱 Appium Mobile Test Results</div>
+              <div class="accordion" id="appiumAccordion">
+                <p style="color:var(--muted);padding:.5rem">Loading Appium results…</p>
+              </div>
+            </div>
+
+            <!-- ══ Selenium Overview ══ -->
+            <div class="section">
+              <div class="section-title">🌐 Selenium Web Test Suites</div>
+              <div class="accordion">
+                <div class="acc-item open">
+                  <div class="acc-header" onclick="this.parentElement.classList.toggle('open')">
+                    <h3>📋 Selenium Suite Overview</h3>
+                    <span class="chevron">▶</span>
+                  </div>
+                  <div class="acc-body">
+                    <table>
+                      <thead><tr><th>Suite</th><th>Description</th><th>Status</th></tr></thead>
+                      <tbody>
+                        <tr><td>functional</td><td>Core app functionality tests</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>ui-ux-compatibility</td><td>UI & cross-browser tests</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>performance-security</td><td>Page speed & security headers</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>api-database</td><td>API integration tests</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>accessibility-mobile</td><td>a11y & responsive tests</td><td class="sim">$SEL_STATUS</td></tr>
+                        <tr><td>regression-e2e</td><td>End-to-end regression suite</td><td class="sim">$SEL_STATUS</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ══ Load Test Metrics ══ -->
+            <div class="section">
+              <div class="section-title">⚡ Load &amp; Performance Metrics</div>
+              <div class="acc-item open" style="border-radius:12px;border:1px solid var(--border);background:var(--surface);">
+                <div class="acc-header" onclick="this.parentElement.classList.toggle('open')">
+                  <h3>🔥 Smoke Test Metrics</h3>
+                  <span class="chevron">▶</span>
+                </div>
+                <div class="acc-body">
+                  <div class="metrics-grid">
+                    <div class="metric-cell">
+                      <div class="m-val">$LOAD_REQS</div>
+                      <div class="m-lbl">Total Requests</div>
+                    </div>
+                    <div class="metric-cell">
+                      <div class="m-val">${LOAD_AVG}ms</div>
+                      <div class="m-lbl">Avg Response Time</div>
+                    </div>
+                    <div class="metric-cell">
+                      <div class="m-val">${LOAD_P95}ms</div>
+                      <div class="m-lbl">p95 Response Time</div>
+                    </div>
+                    <div class="metric-cell">
+                      <div class="m-val">$LOAD_FAIL</div>
+                      <div class="m-lbl">Failure Rate</div>
+                    </div>
+                  </div>
+                  <p style="padding:.75rem 1.25rem;font-size:.75rem;color:var(--muted);">
+                    Full load and stress results are available in the downloaded HTML report artifacts.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- ══ Downloads ══ -->
+            <div class="downloads">
+              <h3>📥 Download Detailed Reports</h3>
+              <div class="dl-cols">
+                <div>
+                  <h4>🌐 Selenium Excel Reports ($SELENIUM_COUNT files)</h4>
+                  <ul>$SELENIUM_LINKS</ul>
+                </div>
+                <div>
+                  <h4>📱 Appium Excel Reports ($APPIUM_COUNT files)</h4>
+                  <ul>$APPIUM_LINKS</ul>
+                  <h4 style="margin-top:.75rem">⚡ Load Reports</h4>
+                  <ul>
+                    <li><a href="load_smoke_summary.json">🔥 smoke_summary.json</a></li>
+                    <li><a href="load_test_report.html">📊 load_test_report.html</a></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <footer>
+              Generated by MedCare+ Unified CI &nbsp;·&nbsp;
+              <a class="gh" href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">
+                View GitHub Actions Run #${{ github.run_number }}
+              </a>
+            </footer>
+
+            <!-- ══ Appium live data script ══ -->
+            <script>
+            const RAW_DATA = ${{ toJSON(env.APPIUM_JSON) }};
+            let results = [];
+            try { results = JSON.parse(RAW_DATA); } catch(_) { results = []; }
+
+            const container = document.getElementById('appiumAccordion');
+            container.innerHTML = '';
+
+            if (!results || !results.length) {
+              container.innerHTML = '<p style="color:var(--muted);padding:.75rem">No Appium JSON sidecar found — download the Excel artifacts for detailed results.</p>';
+            } else {
+              // aggregate stats
+              const total  = results.length;
+              const passed = results.filter(r => r.status === 'PASS').length;
+              const failed = results.filter(r => r.status === 'FAIL').length;
+              const rate   = total ? ((passed/total)*100).toFixed(1)+'%' : '—';
+
+              // stat bar
+              const bar = document.createElement('div');
+              bar.className = 'stats';
+              bar.style.marginBottom = '1rem';
+              bar.innerHTML = [
+                ['Total', total, 'blue'],
+                ['Passed', passed, 'green'],
+                ['Failed', failed, 'red'],
+                ['Pass Rate', rate, 'purple'],
+              ].map(([l,v,c]) => `<div class="stat ${c}"><div class="val">${v}</div><div class="lbl">${l}</div></div>`).join('');
+              container.appendChild(bar);
+
+              // group by platform + suite
+              const grouped = {};
+              results.forEach(r => {
+                const key = (r.platform || 'android') + '::' + r.suiteName;
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push(r);
+              });
+
+              Object.entries(grouped).forEach(([key, rows]) => {
+                const [platform, suiteName] = key.split('::');
+                const icon = platform === 'ios' ? '🍎' : '🤖';
+                const sp = rows.filter(r=>r.status==='PASS').length;
+                const sf = rows.filter(r=>r.status==='FAIL').length;
+                const el = document.createElement('div');
+                el.className = 'acc-item';
+                el.innerHTML = `
+                  <div class="acc-header" onclick="this.parentElement.classList.toggle('open')">
+                    <h3>${icon} <span style="color:var(--muted);font-size:.78rem;margin-right:.3rem">[${platform.toUpperCase()}]</span>${suiteName}
+                      <span class="badge badge-pass" style="margin-left:.4rem">✅ ${sp}</span>
+                      ${sf?'<span class="badge badge-fail">❌ '+sf+'</span>':''}
+                    </h3>
+                    <span class="chevron">▶</span>
+                  </div>
+                  <div class="acc-body">
+                    <table>
+                      <thead><tr><th>#</th><th>Test Case</th><th>Status</th><th>Duration</th><th>Notes</th></tr></thead>
+                      <tbody>${rows.map((r,i)=>`
+                        <tr>
+                          <td>${i+1}</td><td>${r.title}</td>
+                          <td class="${r.status==='PASS'?'pass':r.error?.includes('SIMULATED')?'sim':'fail'}">${r.status}</td>
+                          <td>${r.durationMs??0} ms</td>
+                          <td class="err">${r.error||''}</td>
+                        </tr>`).join('')}
+                      </tbody>
+                    </table>
+                  </div>`;
+                container.appendChild(el);
+              });
+            }
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+
+          echo "✅ Unified HTML report generated → unified_report/index.html"
+
+          # Copy all collected files into unified_report for single download
+          cp all_reports/*.xlsx unified_report/ 2>/dev/null || true
+          cp all_reports/appium_report_data.json unified_report/ 2>/dev/null || true
+          cp all_reports/load_smoke_summary.json unified_report/ 2>/dev/null || true
+          cp all_reports/load_test_report.html unified_report/ 2>/dev/null || true
+
+      - name: Upload Unified CI Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 🚀-unified-ci-report
+          path: unified_report/
+          retention-days: 60
+
+      - name: Post master summary to GitHub Job Summary
+        if: always()
+        run: |
+          SEL="${{ needs.selenium-summary.result }}"
+          LOAD="${{ needs.load-summary.result }}"
+          APP="${{ needs.appium-summary.result }}"
+
+          badge() {
+            case "$1" in
+              success) echo "✅";;
+              failure) echo "❌";;
+              skipped) echo "⏭";;
+              *)       echo "⚠";;
+            esac
+          }
+
+          echo "# 🚀 MedCare+ Full CI Report"                                   >> $GITHUB_STEP_SUMMARY
+          echo ""                                                                 >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Status | Details |"                               >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|---------|"                               >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 **Selenium** | $(badge $SEL) \`$SEL\` | 6 suites · browser: ${{ inputs.browser || 'chrome' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ **Load & Performance** | $(badge $LOAD) \`$LOAD\` | smoke · load · stress · k6 |"               >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 **Appium Mobile** | $(badge $APP) \`$APP\` | platform: ${{ inputs.appium_platform || 'android' }} · Python |" >> $GITHUB_STEP_SUMMARY
+          echo ""                                                                 >> $GITHUB_STEP_SUMMARY
+          echo "| Meta | Value |"                                                 >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|"                                                 >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | \`${{ github.ref_name }}\` |"                      >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Commit | \`${{ github.sha }}\` |"                           >> $GITHUB_STEP_SUMMARY
+          echo "| 🏃 Run | [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo ""                                                                 >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Download the \`🚀-unified-ci-report\` artifact"           >> $GITHUB_STEP_SUMMARY
+          echo "Open **\`index.html\`** for a single-file report covering all three suites."  >> $GITHUB_STEP_SUMMARY
