@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -480,7 +481,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(
-            color: AppTheme.primary.withValues(alpha: 0.3),
+            color: AppTheme.primary.withOpacity(0.3),
             width: 1.5,
             strokeAlign: BorderSide.strokeAlignInside,
           ),
@@ -488,7 +489,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
         ),
         child: CustomPaint(
           painter: _DashedBorderPainter(
-            color: AppTheme.primary.withValues(alpha: 0.3),
+            color: AppTheme.primary.withOpacity(0.3),
             radius: AppTheme.radiusMd,
           ),
           child: Column(
@@ -498,7 +499,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
+                  color: AppTheme.primary.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -536,12 +537,19 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-          child: Image.file(
-            File(_imagePath!),
-            width: double.infinity,
-            height: 200,
-            fit: BoxFit.cover,
-          ),
+          child: kIsWeb
+              ? Image.network(
+                  _imagePath!,
+                  width: double.infinity,
+                  height: 200,
+                  fit: BoxFit.cover,
+                )
+              : Image.file(
+                  File(_imagePath!),
+                  width: double.infinity,
+                  height: 200,
+                  fit: BoxFit.cover,
+                ),
         ),
         Positioned(
           top: AppTheme.spacingSm,
@@ -552,7 +560,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: AppTheme.error.withValues(alpha: 0.9),
+                color: AppTheme.error.withOpacity(0.9),
                 shape: BoxShape.circle,
                 boxShadow: AppTheme.softShadow,
               ),
@@ -634,7 +642,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
                 ),
                 backgroundColor: AppTheme.primarySurface,
                 side: BorderSide(
-                  color: AppTheme.primary.withValues(alpha: 0.3),
+                  color: AppTheme.primary.withOpacity(0.3),
                 ),
                 onPressed: _addTime,
               ),
@@ -683,7 +691,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
             border: Border.all(
               color: isSelected
                   ? AppTheme.primary
-                  : AppTheme.primary.withValues(alpha: 0.15),
+                  : AppTheme.primary.withOpacity(0.15),
             ),
           ),
           child: Center(
@@ -798,7 +806,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withOpacity(0.05),
             blurRadius: 10,
             offset: const Offset(0, -4),
           ),

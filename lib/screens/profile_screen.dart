@@ -213,14 +213,14 @@ class _ProfileScreenState extends State<ProfileScreen>
             height: 88,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: 0.2),
+              color: Colors.white.withOpacity(0.2),
               border: Border.all(
-                color: Colors.white.withValues(alpha: 0.4),
+                color: Colors.white.withOpacity(0.4),
                 width: 3,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: AppTheme.primaryDark.withValues(alpha: 0.3),
+                  color: AppTheme.primaryDark.withOpacity(0.3),
                   blurRadius: 20,
                   offset: const Offset(0, 8),
                 ),
@@ -254,7 +254,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             _profile?.email ?? '',
             style: GoogleFonts.poppins(
               fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.8),
+              color: Colors.white.withOpacity(0.8),
             ),
           ),
         ],
@@ -524,7 +524,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
+              color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             ),
             child: Icon(icon, size: 18, color: color),

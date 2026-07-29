@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -25,27 +26,31 @@ class ImageService {
   /// Save an image from a temporary path to the app's documents directory.
   /// Returns the permanent file path.
   static Future<String> saveImage(String tempPath) async {
-    final directory = await getApplicationDocumentsDirectory();
-    final imageDir = Directory('${directory.path}/medicine_images');
+    if (kIsWeb) return tempPath;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final imageDir = Directory('${directory.path}/medicine_images');
 
-    // Create the directory if it doesn't exist
-    if (!await imageDir.exists()) {
-      await imageDir.create(recursive: true);
+      if (!await imageDir.exists()) {
+        await imageDir.create(recursive: true);
+      }
+
+      final fileName =
+          'med_img_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final newPath = '${imageDir.path}/$fileName';
+
+      final tempFile = File(tempPath);
+      await tempFile.copy(newPath);
+
+      return newPath;
+    } catch (_) {
+      return tempPath;
     }
-
-    final fileName =
-        'med_img_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final newPath = '${imageDir.path}/$fileName';
-
-    // Copy file to permanent location
-    final tempFile = File(tempPath);
-    await tempFile.copy(newPath);
-
-    return newPath;
   }
 
   /// Delete an image file if it exists.
   static Future<void> deleteImage(String path) async {
+    if (kIsWeb) return;
     try {
       final file = File(path);
       if (await file.exists()) {

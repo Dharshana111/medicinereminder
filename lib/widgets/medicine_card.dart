@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -60,23 +61,39 @@ class MedicineCard extends StatelessWidget {
         child: SizedBox(
           width: 60,
           height: 60,
-          child: medicine.imagePath != null &&
-                  File(medicine.imagePath!).existsSync()
-              ? Image.file(
-                  File(medicine.imagePath!),
-                  fit: BoxFit.cover,
-                )
-              : Container(
-                  decoration: const BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                  ),
-                  child: const Icon(
-                    Icons.medication_rounded,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                ),
+          child: _getImageWidget(),
         ),
+      ),
+    );
+  }
+
+  Widget _getImageWidget() {
+    if (medicine.imagePath != null && medicine.imagePath!.isNotEmpty) {
+      if (kIsWeb) {
+        return Image.network(
+          medicine.imagePath!,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildFallbackIcon(),
+        );
+      } else {
+        final file = File(medicine.imagePath!);
+        if (file.existsSync()) {
+          return Image.file(file, fit: BoxFit.cover);
+        }
+      }
+    }
+    return _buildFallbackIcon();
+  }
+
+  Widget _buildFallbackIcon() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: AppTheme.primaryGradient,
+      ),
+      child: const Icon(
+        Icons.medication_rounded,
+        color: Colors.white,
+        size: 30,
       ),
     );
   }
