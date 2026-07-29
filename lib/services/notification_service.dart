@@ -209,8 +209,7 @@ class NotificationService {
         scheduledDate,
         notificationDetails,
         androidScheduleMode: scheduleMode,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
+
         matchDateTimeComponents: DateTimeComponents.time,
         payload: medicine.id,
       );
