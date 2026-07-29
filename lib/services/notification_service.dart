@@ -48,7 +48,7 @@ class NotificationService {
         );
 
         await _notifications.initialize(
-          settings: initSettings,
+          initSettings,
           onDidReceiveNotificationResponse: _onNotificationTapped,
         );
 
@@ -202,6 +202,8 @@ class NotificationService {
         body: 'Time to take ${medicine.name} - ${medicine.dosage}',
         scheduledDate: scheduledDate,
         notificationDetails: notificationDetails,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: scheduleMode,
         matchDateTimeComponents: DateTimeComponents.time,
         payload: medicine.id,
