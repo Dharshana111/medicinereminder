@@ -7,7 +7,6 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:medreminder/models/medicine.dart';
 import 'package:medreminder/models/medicine_history.dart';
 import 'package:medreminder/services/storage_service.dart';
@@ -27,9 +26,17 @@ class NotificationService {
     // Initialize timezone data
     tzdata.initializeTimeZones();
     try {
-      final String timeZoneName = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(timeZoneName));
-      debugPrint('Local timezone initialized to: $timeZoneName');
+      // DateTime.timeZoneName works on all platforms including web without plugins
+      final String timeZoneName = DateTime.now().timeZoneName;
+      // timeZoneName may be an abbreviation (e.g. 'IST') so try to find it,
+      // fall back to UTC if not found in the timezone database
+      try {
+        tz.setLocalLocation(tz.getLocation(timeZoneName));
+        debugPrint('Local timezone initialized to: $timeZoneName');
+      } catch (_) {
+        tz.setLocalLocation(tz.UTC);
+        debugPrint('Timezone "$timeZoneName" not in database, using UTC.');
+      }
     } catch (e) {
       debugPrint('Failed to get local timezone: $e. Falling back to UTC.');
       tz.setLocalLocation(tz.UTC);
@@ -106,7 +113,7 @@ class NotificationService {
     // Dismiss the notification upon tapping any action button or background response
     if (response.id != null) {
       try {
-        await _notifications.cancel(id: response.id!);
+        await _notifications.cancel(response.id!);
       } catch (e) {
         debugPrint('Failed to cancel notification on tap: $e');
       }
@@ -196,14 +203,14 @@ class NotificationService {
           : AndroidScheduleMode.inexactAllowWhileIdle;
 
       await _notifications.zonedSchedule(
-        id: notificationId,
-        title: '💊 Medicine Reminder',
-        body: 'Time to take ${medicine.name} - ${medicine.dosage}',
-        scheduledDate: scheduledDate,
-        notificationDetails: notificationDetails,
+        notificationId,
+        '💊 Medicine Reminder',
+        'Time to take ${medicine.name} - ${medicine.dosage}',
+        scheduledDate,
+        notificationDetails,
+        androidScheduleMode: scheduleMode,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: scheduleMode,
         matchDateTimeComponents: DateTimeComponents.time,
         payload: medicine.id,
       );
@@ -239,7 +246,7 @@ class NotificationService {
     try {
       for (final time in medicine.scheduleTimes) {
         final notificationId = (medicine.id.hashCode + time.hour * 60 + time.minute) & 0x7FFFFFFF;
-        await _notifications.cancel(id: notificationId);
+        await _notifications.cancel(notificationId);
       }
     } catch (e) {
       debugPrint('Failed to cancel notifications: $e');
