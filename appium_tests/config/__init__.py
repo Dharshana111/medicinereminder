@@ -1,0 +1,1 @@
+# MedCare+ Appium Config package

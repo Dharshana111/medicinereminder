@@ -1,0 +1,344 @@
+name: "⚡ Load & Performance Tests"
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'load_tests/**'
+      - 'web/**'
+      - '.github/workflows/load-testing.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'load_tests/**'
+  schedule:
+    # Run nightly at 2 AM UTC on main branch
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of load test to run'
+        required: false
+        default: 'smoke'
+        type: choice
+        options: [smoke, load, stress, all]
+      vus:
+        description: 'Override virtual users (for custom runs)'
+        required: false
+        default: ''
+        type: string
+      base_url:
+        description: 'Target URL (default: localhost:8080)'
+        required: false
+        default: 'http://localhost:8080'
+
+concurrency:
+  group: load-testing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Job 1: Build Flutter Web App
+  # ─────────────────────────────────────────────────────────────────
+  build-and-serve:
+    name: "🔨 Build Flutter Web"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Flutter web
+        run: flutter build web --release
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 2: Smoke Test (always runs first)
+  # ─────────────────────────────────────────────────────────────────
+  smoke-test:
+    name: "🔥 Smoke Test"
+    runs-on: ubuntu-latest
+    needs: build-and-serve
+    if: ${{ inputs.test_type == 'smoke' || inputs.test_type == 'all' || inputs.test_type == '' || github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Start web server
+        run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+          curl -f http://localhost:8080 && echo "✅ Server is up"
+
+      - name: Create reports directory
+        run: mkdir -p load_tests/reports
+
+      - name: Run k6 smoke test
+        working-directory: load_tests
+        env:
+          K6_BROWSER_HEADLESS: 'true'
+        run: |
+          k6 run \
+            --out json=reports/smoke_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            01_smoke_test.js
+
+      - name: Generate HTML report
+        working-directory: load_tests
+        run: node generate_report.js
+
+      - name: Upload smoke test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-smoke-reports
+          path: |
+            load_tests/reports/load_smoke_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+      - name: Publish smoke results to Job Summary
+        if: always()
+        run: |
+          if [ -f load_tests/reports/load_smoke_summary.json ]; then
+            AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' load_tests/reports/load_smoke_summary.json 2>/dev/null || echo "N/A")
+            P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' load_tests/reports/load_smoke_summary.json 2>/dev/null || echo "N/A")
+            FAIL=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' load_tests/reports/load_smoke_summary.json 2>/dev/null || echo "N/A")
+            REQS=$(jq -r '.metrics.http_reqs.values.count // "N/A"' load_tests/reports/load_smoke_summary.json 2>/dev/null || echo "N/A")
+            echo "## 🔥 Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Requests | $REQS |" >> $GITHUB_STEP_SUMMARY
+            echo "| Avg Response | ${AVG}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| p95 Response | ${P95}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failure Rate | $FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 3: Load Test (normal traffic)
+  # ─────────────────────────────────────────────────────────────────
+  load-test:
+    name: "⚡ Load Test (Normal Traffic)"
+    runs-on: ubuntu-latest
+    needs: [build-and-serve, smoke-test]
+    if: ${{ inputs.test_type == 'load' || inputs.test_type == 'all' || github.event_name == 'schedule' }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Start web server
+        run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+          curl -f http://localhost:8080
+
+      - name: Create reports directory
+        run: mkdir -p load_tests/reports
+
+      - name: Run k6 load test
+        working-directory: load_tests
+        run: |
+          k6 run \
+            --out json=reports/load_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            02_load_test.js
+        continue-on-error: true
+
+      - name: Generate HTML report
+        working-directory: load_tests
+        run: node generate_report.js
+
+      - name: Upload load test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-normal-reports
+          path: |
+            load_tests/reports/load_load_test_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+      - name: Publish load results to Job Summary
+        if: always()
+        run: |
+          if [ -f load_tests/reports/load_load_test_summary.json ]; then
+            AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            P95=$(jq -r '.metrics.http_req_duration.values["p(95)"] // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            P99=$(jq -r '.metrics.http_req_duration.values["p(99)"] // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            FAIL=$(jq -r '.metrics.http_req_failed.values.rate // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            REQS=$(jq -r '.metrics.http_reqs.values.count // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            VUS=$(jq -r '.metrics.vus_max.values.max // "N/A"' load_tests/reports/load_load_test_summary.json 2>/dev/null || echo "N/A")
+            echo "## ⚡ Load Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value | Threshold |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Requests | $REQS | — |" >> $GITHUB_STEP_SUMMARY
+            echo "| Max VUs | $VUS | 100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Avg Response | ${AVG}ms | < 1000ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| p95 Response | ${P95}ms | < 3000ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| p99 Response | ${P99}ms | < 5000ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failure Rate | $FAIL | < 2% |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 4: Stress Test (nightly / manual only)
+  # ─────────────────────────────────────────────────────────────────
+  stress-test:
+    name: "💥 Stress Test"
+    runs-on: ubuntu-latest
+    needs: [build-and-serve, smoke-test]
+    if: ${{ inputs.test_type == 'stress' || inputs.test_type == 'all' || github.event_name == 'schedule' }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-load
+          path: build/web/
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Start web server
+        run: |
+          npx -y serve build/web -l 8080 &
+          sleep 3
+
+      - name: Create reports directory
+        run: mkdir -p load_tests/reports
+
+      - name: Run k6 stress test
+        working-directory: load_tests
+        run: |
+          k6 run \
+            --out json=reports/stress_raw.json \
+            -e BASE_URL=http://localhost:8080 \
+            03_stress_test.js
+        continue-on-error: true
+
+      - name: Generate HTML report
+        working-directory: load_tests
+        run: node generate_report.js
+
+      - name: Upload stress test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-stress-reports
+          path: |
+            load_tests/reports/load_stress_test_summary.json
+            load_tests/reports/load_test_report.html
+          retention-days: 30
+
+      - name: Publish stress results to Job Summary
+        if: always()
+        run: |
+          if [ -f load_tests/reports/load_stress_test_summary.json ]; then
+            # Handle both wrapped and raw format
+            FAIL=$(jq -r '(.summary.failureRate // (.metrics.http_req_failed.values.rate | tostring + "%")) // "N/A"' load_tests/reports/load_stress_test_summary.json 2>/dev/null || echo "N/A")
+            P95=$(jq -r '(.summary.p95ResponseMs // .metrics.http_req_duration.values["p(95)"]) // "N/A"' load_tests/reports/load_stress_test_summary.json 2>/dev/null || echo "N/A")
+            echo "## 💥 Stress Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value | Threshold |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "| p95 Response | ${P95}ms | < 10000ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failure Rate | $FAIL | < 10% |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 5: Consolidated Report
+  # ─────────────────────────────────────────────────────────────────
+  load-test-summary:
+    name: "📊 Load Test Summary"
+    runs-on: ubuntu-latest
+    needs: [smoke-test, load-test, stress-test]
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all load test reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: load-*-reports
+          path: all_load_reports/
+          merge-multiple: true
+
+      - name: Setup Node.js (for report generation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Merge and generate final HTML report
+        run: |
+          mkdir -p load_tests/reports
+          # Copy all JSON summaries to reports dir
+          find all_load_reports/ -name "*.json" -exec cp {} load_tests/reports/ \;
+          node load_tests/generate_report.js
+
+      - name: Upload final consolidated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-final-report
+          path: |
+            load_tests/reports/load_test_report.html
+            load_tests/reports/*.json
+          retention-days: 30
+
+      - name: Final summary
+        run: |
+          echo "## ⚡ Load Testing Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏃 Run | [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Test Type | ${{ inputs.test_type || 'smoke' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Download Reports" >> $GITHUB_STEP_SUMMARY
+          echo "- \`load-test-final-report\` — HTML dashboard + all JSON summaries" >> $GITHUB_STEP_SUMMARY
+          echo "- \`load-smoke-reports\` — Smoke test results" >> $GITHUB_STEP_SUMMARY
+          echo "- \`load-normal-reports\` — Load test results" >> $GITHUB_STEP_SUMMARY
+          echo "- \`load-stress-reports\` — Stress test results" >> $GITHUB_STEP_SUMMARY

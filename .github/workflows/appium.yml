@@ -1,0 +1,304 @@
+name: "📱 Appium Mobile Tests"
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'appium_tests/**'
+      - 'lib/**'
+      - 'android/**'
+      - 'ios/**'
+      - '.github/workflows/appium.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'appium_tests/**'
+      - 'lib/**'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Mobile platform to test'
+        required: false
+        default: 'android'
+        type: choice
+        options: [android, ios, both]
+
+concurrency:
+  group: appium-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Job 1: Build Android APK
+  # ─────────────────────────────────────────────────────────────────
+  build-android:
+    name: "🤖 Build Android APK"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.platform != 'ios' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Android Debug APK
+        run: flutter build apk --debug --no-shrink
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: build/app/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 2: Run Appium Android Tests
+  # ─────────────────────────────────────────────────────────────────
+  appium-android:
+    name: "🤖 Appium Android Tests"
+    runs-on: ubuntu-latest
+    needs: build-android
+    if: ${{ inputs.platform != 'ios' }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-debug-apk
+          path: build/app/outputs/apk/debug/
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: appium_tests/package.json
+
+      - name: Install Appium globally
+        run: |
+          npm install -g appium@2
+          appium driver install uiautomator2
+          appium driver install xcuitest
+
+      - name: Install test dependencies
+        working-directory: appium_tests
+        run: npm install
+
+      - name: Enable Android emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get install -y libvirt-clients libvirt-daemon-system
+          sudo adduser $USER libvirt
+          sudo adduser $USER kvm
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create Android Emulator
+        run: |
+          echo "y" | sdkmanager --install "system-images;android-33;google_apis;x86_64"
+          echo "no" | avdmanager create avd \
+            --name "Pixel_5_API_33" \
+            --package "system-images;android-33;google_apis;x86_64" \
+            --device "pixel_5" \
+            --force
+
+      - name: Start Android Emulator
+        run: |
+          emulator -avd Pixel_5_API_33 \
+            -no-audio -no-window -gpu swiftshader_indirect \
+            -no-snapshot -wipe-data &
+          adb wait-for-device
+          # Wait for fully booted
+          timeout 300 bash -c 'while [[ "$(adb shell getprop sys.boot_completed 2>&1)" != "1" ]]; do sleep 5; done'
+          echo "✅ Emulator booted"
+
+      - name: Start Appium Server
+        run: |
+          appium --port 4723 --log-level warn &
+          sleep 5
+          echo "✅ Appium server started"
+
+      - name: Install APK on emulator
+        run: |
+          adb install -r build/app/outputs/apk/debug/app-debug.apk
+          echo "✅ APK installed"
+
+      - name: Create reports directory
+        working-directory: appium_tests
+        run: mkdir -p ../reports
+
+      - name: Run Appium Android tests
+        working-directory: appium_tests
+        env:
+          PLATFORM: android
+          ANDROID_DEVICE: emulator-5554
+          ANDROID_VERSION: '13.0'
+          ANDROID_APK_PATH: ../build/app/outputs/apk/debug/app-debug.apk
+          APPIUM_HOST: '127.0.0.1'
+          APPIUM_PORT: '4723'
+        run: node run_appium_tests.js
+        continue-on-error: true
+
+      - name: Capture emulator screenshot on failure
+        if: failure()
+        run: adb exec-out screencap -p > reports/emulator_failure_screenshot.png
+
+      - name: Upload Appium Android reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appium-android-reports
+          path: |
+            reports/Appium_android_*.xlsx
+            reports/emulator_failure_screenshot.png
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 3: Run Appium iOS Tests (macOS only)
+  # ─────────────────────────────────────────────────────────────────
+  appium-ios:
+    name: "🍎 Appium iOS Tests"
+    runs-on: macos-14
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build iOS Debug App
+        run: |
+          flutter build ios --debug --simulator --no-codesign
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Appium and XCUITest driver
+        run: |
+          npm install -g appium@2
+          appium driver install xcuitest
+
+      - name: Install test dependencies
+        working-directory: appium_tests
+        run: npm install
+
+      - name: Boot iOS Simulator
+        run: |
+          UDID=$(xcrun simctl list devices available | grep "iPhone 15" | grep -oE '[0-9A-F-]{36}' | head -1)
+          echo "SIMULATOR_UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "✅ Simulator booted: $UDID"
+
+      - name: Install app on simulator
+        run: |
+          xcrun simctl install "$SIMULATOR_UDID" \
+            build/ios/iphonesimulator/Runner.app
+
+      - name: Start Appium Server
+        run: |
+          appium --port 4723 --log-level warn &
+          sleep 5
+
+      - name: Create reports directory
+        working-directory: appium_tests
+        run: mkdir -p ../reports
+
+      - name: Run Appium iOS tests
+        working-directory: appium_tests
+        env:
+          PLATFORM: ios
+          IOS_DEVICE: iPhone 15
+          IOS_VERSION: '17.0'
+          IOS_APP_PATH: ../build/ios/iphonesimulator/Runner.app
+          APPIUM_HOST: '127.0.0.1'
+          APPIUM_PORT: '4723'
+        run: node run_appium_tests.js
+        continue-on-error: true
+
+      - name: Upload Appium iOS reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appium-ios-reports
+          path: reports/Appium_ios_*.xlsx
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 4: Summary
+  # ─────────────────────────────────────────────────────────────────
+  appium-summary:
+    name: "📊 Appium Test Summary"
+    runs-on: ubuntu-latest
+    needs: [appium-android, appium-ios]
+    if: always()
+    steps:
+      - name: Download all Appium reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: appium-*-reports
+          path: appium_reports/
+          merge-multiple: true
+
+      - name: Post summary to Job Summary
+        run: |
+          echo "## 📱 Appium Mobile Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏃 Run | [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 Platform | ${{ inputs.platform || 'android' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Download Appium Reports" >> $GITHUB_STEP_SUMMARY
+          echo "Excel reports are available as **Artifacts** in this Actions run." >> $GITHUB_STEP_SUMMARY
+          echo "- \`appium-android-reports\` — Android test results" >> $GITHUB_STEP_SUMMARY
+          echo "- \`appium-ios-reports\` — iOS test results" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload consolidated Appium reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appium-all-reports
+          path: appium_reports/
+          retention-days: 30

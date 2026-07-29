@@ -1,0 +1,47 @@
+name: "🚀 Full Test Suite (CI)"
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # ── Trigger all test workflows ──────────────────────────────────
+  selenium:
+    name: "Trigger Selenium Tests"
+    uses: ./.github/workflows/selenium.yml
+    secrets: inherit
+
+  load-smoke:
+    name: "Trigger Load Tests (Smoke)"
+    uses: ./.github/workflows/load-testing.yml
+    with:
+      test_type: smoke
+    secrets: inherit
+
+  # ── Master Summary ───────────────────────────────────────────────
+  ci-summary:
+    name: "📋 CI Master Summary"
+    runs-on: ubuntu-latest
+    needs: [selenium, load-smoke]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ci_reports/
+
+      - name: Post CI summary
+        run: |
+          echo "# 🚀 MedCare+ Full CI Test Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Suite | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Selenium | ${{ needs.selenium.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ Load Smoke | ${{ needs.load-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> 📱 **Appium tests** run separately via \`workflow_dispatch\` (requires device/emulator)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\` | **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY

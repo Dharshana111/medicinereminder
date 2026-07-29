@@ -1,0 +1,16 @@
+{
+  "name": "medcare-load-tests",
+  "version": "1.0.0",
+  "description": "k6 Load Testing Suite for MedCare+ Web Application",
+  "scripts": {
+    "test:smoke":    "k6 run --out json=reports/smoke_raw.json 01_smoke_test.js",
+    "test:load":     "k6 run --out json=reports/load_raw.json  02_load_test.js",
+    "test:stress":   "k6 run --out json=reports/stress_raw.json 03_stress_test.js",
+    "test:soak":     "k6 run --out json=reports/soak_raw.json  04_soak_test.js",
+    "generate:report": "node generate_report.js"
+  },
+  "keywords": ["k6", "load-testing", "performance", "medcare"],
+  "author": "MedCare Technical Testing Team",
+  "license": "MIT",
+  "dependencies": {}
+}

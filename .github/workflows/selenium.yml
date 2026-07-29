@@ -1,0 +1,220 @@
+name: "🌐 Selenium Web Tests"
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'selenium_tests/**'
+      - 'web/**'
+      - 'lib/**'
+      - '.github/workflows/selenium.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'selenium_tests/**'
+      - 'web/**'
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Browser to test with'
+        required: false
+        default: 'chrome'
+        type: choice
+        options: [chrome, firefox, edge]
+
+concurrency:
+  group: selenium-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Job 1: Build Flutter Web App
+  # ─────────────────────────────────────────────────────────────────
+  build-flutter-web:
+    name: "🔨 Build Flutter Web"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Flutter web
+        run: |
+          flutter build web --release \
+            --dart-define=FLUTTER_WEB_USE_SKIA=true
+
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build
+          path: build/web/
+          retention-days: 3
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 2: Run Selenium Tests
+  # ─────────────────────────────────────────────────────────────────
+  selenium-tests:
+    name: "🧪 Selenium Tests (${{ matrix.suite }})"
+    runs-on: ubuntu-latest
+    needs: build-flutter-web
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - functional
+          - ui-ux-compatibility
+          - performance-security
+          - api-database
+          - accessibility-mobile
+          - regression-e2e
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Flutter web build
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build
+          path: build/web/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: selenium_tests/package-lock.json
+
+      - name: Install Selenium dependencies
+        working-directory: selenium_tests
+        run: npm ci --prefer-offline
+
+      - name: Setup Chrome & ChromeDriver
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: 'stable'
+
+      - name: Setup ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Verify Chrome and ChromeDriver versions
+        run: |
+          google-chrome --version
+          chromedriver --version
+
+      - name: Create reports directory
+        working-directory: selenium_tests
+        run: mkdir -p reports
+
+      - name: Run Selenium test suite — ${{ matrix.suite }}
+        working-directory: selenium_tests
+        env:
+          HEADLESS: 'true'
+          TEST_BROWSER: ${{ inputs.browser || 'chrome' }}
+          TEST_SUITE: ${{ matrix.suite }}
+          CI: 'true'
+        run: |
+          node run_tests.js
+        continue-on-error: true
+
+      - name: Upload Selenium Excel reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selenium-report-${{ matrix.suite }}
+          path: |
+            selenium_tests/reports/*.xlsx
+            selenium_tests/reports/*.csv
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 3: Aggregate & Publish Results
+  # ─────────────────────────────────────────────────────────────────
+  selenium-summary:
+    name: "📊 Selenium Test Summary"
+    runs-on: ubuntu-latest
+    needs: selenium-tests
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all Selenium reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: selenium-report-*
+          path: selenium_reports/
+          merge-multiple: true
+
+      - name: List collected reports
+        run: ls -la selenium_reports/ || echo "No reports found"
+
+      - name: Generate consolidated Selenium HTML summary
+        run: |
+          cat > selenium_reports/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8"/>
+            <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+            <title>MedCare+ Selenium Test Reports</title>
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+              *{box-sizing:border-box;margin:0;padding:0}
+              body{font-family:'Inter',sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem}
+              h1{text-align:center;font-size:1.8rem;font-weight:700;margin-bottom:.5rem;
+                 background:linear-gradient(135deg,#60a5fa,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+              .meta{text-align:center;color:#64748b;margin-bottom:2rem}
+              .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;max-width:1100px;margin:0 auto}
+              .card{background:#1e293b;border-radius:10px;border:1px solid rgba(255,255,255,.08);
+                    padding:1.25rem;border-left:4px solid #3b82f6;transition:transform .2s}
+              .card:hover{transform:translateY(-2px)}
+              .card h3{font-size:1rem;font-weight:600;margin-bottom:.5rem;color:#f1f5f9}
+              .card p{font-size:.8rem;color:#64748b}
+              a{color:#60a5fa;text-decoration:none}a:hover{text-decoration:underline}
+            </style>
+          </head>
+          <body>
+            <h1>🌐 MedCare+ Selenium Reports</h1>
+            <p class="meta">Run: ${{ github.run_number }} | Commit: ${{ github.sha }} | Branch: ${{ github.ref_name }}</p>
+            <div class="grid">
+              <div class="card"><h3>📁 All Reports Available</h3><p>Download artifacts from the Actions run to view the full Excel reports.</p></div>
+              <div class="card"><h3>🔗 Run Details</h3><p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View GitHub Actions Run →</a></p></div>
+            </div>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload consolidated Selenium report index
+        uses: actions/upload-artifact@v4
+        with:
+          name: selenium-all-reports
+          path: selenium_reports/
+          retention-days: 30
+
+      - name: Post summary to Job Summary
+        if: always()
+        run: |
+          echo "## 🌐 Selenium Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏃 Run | [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Browser | ${{ inputs.browser || 'chrome' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Download Reports" >> $GITHUB_STEP_SUMMARY
+          echo "Excel reports are available as **Artifacts** in this Actions run." >> $GITHUB_STEP_SUMMARY
+          echo "Download \`selenium-all-reports\` for consolidated results." >> $GITHUB_STEP_SUMMARY

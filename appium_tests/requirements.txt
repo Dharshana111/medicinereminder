@@ -1,0 +1,8 @@
+# MedCare+ Appium Python Test Suite – Dependencies
+# Install with:  pip install -r requirements.txt
+
+# Appium Python client (includes selenium under the hood)
+Appium-Python-Client>=3.2.0
+
+# Excel report generation
+openpyxl>=3.1.2

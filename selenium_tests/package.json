@@ -1,0 +1,24 @@
+{
+  "name": "medcare-selenium-tests",
+  "version": "1.0.0",
+  "description": "End-to-End Selenium Automation Test Suite with Excel Analysis Reporting for MedCare+",
+  "main": "run_tests.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node run_tests.js"
+  },
+  "keywords": [
+    "selenium",
+    "webdriver",
+    "e2e-testing",
+    "exceljs",
+    "medcare",
+    "automation"
+  ],
+  "author": "MedCare Technical Testing Team",
+  "license": "MIT",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "selenium-webdriver": "^4.28.0"
+  }
+}

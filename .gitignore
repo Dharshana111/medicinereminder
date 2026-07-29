@@ -43,3 +43,23 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# ── Test Suite Dependencies ─────────────────────────────────────
+# Selenium Tests
+selenium_tests/node_modules/
+selenium_tests/package-lock.json
+
+# Appium Tests
+appium_tests/node_modules/
+appium_tests/package-lock.json
+
+# Load Tests
+load_tests/node_modules/
+load_tests/reports/*.json
+load_tests/reports/*.html
+
+# Generated Reports (committed only in CI artifacts, not source)
+**/reports/*.xlsx
+**/reports/*.csv
+**/reports/load_*.json
+**/reports/load_test_report.html
