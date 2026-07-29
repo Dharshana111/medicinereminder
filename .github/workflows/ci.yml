@@ -124,7 +124,7 @@ jobs:
             "suite": "Selenium",
             "icon": "🌐",
             "status": "${{ needs.selenium.result }}",
-            "browser": "${{ inputs.browser || "chrome" }}",
+            "browser": "${{ inputs.browser || 'chrome' }}",
             "suites": ["functional","ui-ux-compatibility","performance-security","api-database","accessibility-mobile","regression-e2e"]
           }' > ci_meta/selenium_status.json
       - uses: actions/upload-artifact@v4
@@ -449,7 +449,7 @@ jobs:
             "icon": "📱",
             "android": "${{ needs.appium_android.result }}",
             "ios": "${{ needs.appium_ios.result }}",
-            "platform": "${{ inputs.appium_platform || "android" }}"
+            "platform": "${{ inputs.appium_platform || 'android' }}"
           }' > ci_meta/appium_status.json
       - uses: actions/upload-artifact@v4
         with:
