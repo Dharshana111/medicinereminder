@@ -191,12 +191,12 @@ class _SplashScreenState extends State<SplashScreen>
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
+                color: Colors.black.withOpacity(0.15),
                 blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
               BoxShadow(
-                color: AppTheme.primaryLight.withValues(alpha: 0.4),
+                color: AppTheme.primaryLight.withOpacity(0.4),
                 blurRadius: 40,
                 spreadRadius: 5,
               ),
@@ -238,7 +238,7 @@ class _SplashScreenState extends State<SplashScreen>
         style: GoogleFonts.poppins(
           fontSize: 16,
           fontWeight: FontWeight.w400,
-          color: Colors.white.withValues(alpha: 0.85),
+          color: Colors.white.withOpacity(0.85),
           letterSpacing: 0.5,
         ),
       ),
@@ -257,7 +257,7 @@ class _SplashScreenState extends State<SplashScreen>
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
               valueColor: AlwaysStoppedAnimation<Color>(
-                Colors.white.withValues(alpha: 0.7),
+                Colors.white.withOpacity(0.7),
               ),
             ),
           ),
@@ -266,7 +266,7 @@ class _SplashScreenState extends State<SplashScreen>
             'Loading...',
             style: GoogleFonts.poppins(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.5),
+              color: Colors.white.withOpacity(0.5),
             ),
           ),
         ],
