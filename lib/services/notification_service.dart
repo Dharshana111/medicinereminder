@@ -3,7 +3,6 @@ import 'package:universal_io/io.dart' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -11,11 +10,16 @@ import 'package:medreminder/models/medicine.dart';
 import 'package:medreminder/models/medicine_history.dart';
 import 'package:medreminder/services/storage_service.dart';
 import 'package:medreminder/utils/constants.dart';
+// flutter_tts is not supported on web — import only on non-web platforms
+import 'package:flutter_tts/flutter_tts.dart'
+    // ignore: uri_does_not_exist
+    if (dart.library.html) 'package:medreminder/services/tts_stub.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
-  static final FlutterTts _tts = FlutterTts();
+  // TTS is null on web since flutter_tts doesn't support web
+  static final FlutterTts? _tts = kIsWeb ? null : FlutterTts();
   static bool _initialized = false;
   static final List<Timer> _activeTimers = [];
 
@@ -92,9 +96,9 @@ class NotificationService {
 
     // Initialize TTS
     try {
-      await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.5);
-      await _tts.setVolume(1.0);
+      await _tts?.setLanguage('en-US');
+      await _tts?.setSpeechRate(0.5);
+      await _tts?.setVolume(1.0);
     } catch (e) {
       debugPrint('TTS initialization skipped/failed: $e');
     }
@@ -264,14 +268,14 @@ class NotificationService {
 
   /// Use TTS to speak a medicine reminder aloud
   static Future<void> speakReminder(String medicineName) async {
-    await _tts.speak(
+    await _tts?.speak(
       'It is time to take your medicine: $medicineName',
     );
   }
 
   /// Use TTS to say "Take your medicine now: [medicineName]"
   static Future<void> speakTakeMedicineNow(String medicineName) async {
-    await _tts.speak(
+    await _tts?.speak(
       'Take your medicine now: $medicineName',
     );
   }
