@@ -16,8 +16,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.4
 
-  # Text-to-Speech
-  flutter_tts: ^4.2.2
+
 
   # Local Storage
   shared_preferences: ^2.5.2
