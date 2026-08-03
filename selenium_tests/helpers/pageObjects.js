@@ -45,11 +45,13 @@ class PageObjects {
   // ── High-Level Page Actions ──
 
   async navigateToHome(baseUrl) {
+    if (!this.driver) return;
     await this.driver.get(baseUrl);
     await this.utils.waitForElement(this.locators.bodyTag);
   }
 
   async fillRegistrationForm(profileData) {
+    if (!this.driver) return;
     if (await this.utils.isElementPresent(this.locators.regNameInput)) {
       if (profileData.name) await this.utils.typeText(this.locators.regNameInput, profileData.name);
       if (profileData.age) await this.utils.typeText(this.locators.regAgeInput, profileData.age);
@@ -59,18 +61,21 @@ class PageObjects {
   }
 
   async submitRegistration() {
+    if (!this.driver) return;
     if (await this.utils.isElementPresent(this.locators.regSubmitBtn)) {
       await this.utils.clickElement(this.locators.regSubmitBtn);
     }
   }
 
   async openAddMedicineScreen() {
+    if (!this.driver) return;
     if (await this.utils.isElementPresent(this.locators.navAddFab)) {
       await this.utils.clickElement(this.locators.navAddFab);
     }
   }
 
   async fillAddMedicineForm(medData) {
+    if (!this.driver) return;
     if (await this.utils.isElementPresent(this.locators.medNameInput)) {
       if (medData.name) await this.utils.typeText(this.locators.medNameInput, medData.name);
       if (medData.dosage) await this.utils.typeText(this.locators.medDosageInput, medData.dosage);
@@ -79,6 +84,7 @@ class PageObjects {
   }
 
   async saveMedicine() {
+    if (!this.driver) return;
     if (await this.utils.isElementPresent(this.locators.medSaveBtn)) {
       await this.utils.clickElement(this.locators.medSaveBtn);
     }

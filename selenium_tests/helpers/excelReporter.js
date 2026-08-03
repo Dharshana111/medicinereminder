@@ -43,7 +43,11 @@ class ExcelReporter {
     await this.workbook.xlsx.writeFile(reportPath);
     await this.workbook.xlsx.writeFile(latestReportPath);
 
-    return { reportPath, latestReportPath };
+    // Save JSON data file for Consolidated Report generator
+    const jsonPath = path.join(config.reportsDir, 'selenium_report_data.json');
+    fs.writeFileSync(jsonPath, JSON.stringify(testResults, null, 2), 'utf8');
+
+    return { reportPath, latestReportPath, jsonPath };
   }
 
   /**

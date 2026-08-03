@@ -1,18 +1,17 @@
 """
 MedCare+ Appium Test Runner (Python)
-Mirrors run_appium_tests.js – orchestrates all five suites and saves an Excel report.
-
-Usage
------
-    # From the appium_tests/ directory:
-    python run_appium_tests.py                    # uses PLATFORM env var (default: android)
-    PLATFORM=ios python run_appium_tests.py
+Orchestrates all 350 Appium mobile test cases across five suites and saves JSON & Excel reports.
 """
 import sys
+import os
 import time
 
-# ── Make helper / config importable from any CWD ─────────────────────────────
-import os
+# Reconfigure stdout/stderr for UTF-8 on Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from tests.test_01_app_launch          import run_app_launch_tests
@@ -27,9 +26,9 @@ from config.appium_config              import PLATFORM
 
 def execute_all_appium_tests() -> None:
     print()
-    print("═══════════════════════════════════════════════════════════════════")
+    print("===================================================================")
     print(f"📱 MEDCARE+ APPIUM MOBILE TEST FRAMEWORK  |  Platform: {PLATFORM.upper()}")
-    print("═══════════════════════════════════════════════════════════════════\n")
+    print("===================================================================\n")
 
     global_start = time.time()
     all_results: list[dict] = []
@@ -43,12 +42,12 @@ def execute_all_appium_tests() -> None:
     ]
 
     for suite in suites:
-        print(f"▶ [{suite['id']}/{len(suites)}] {suite['name']}")
+        print(f"▶ [{suite['id']}/{len(suites)}] {suite['name']}...")
         try:
             results = suite["runner"]()
             if isinstance(results, list):
                 all_results.extend(results)
-            print(f"  ✔ Completed {suite['name']}")
+            print(f"  ✔ Completed {suite['name']} ({len(results)} tests)")
         except Exception as exc:  # noqa: BLE001
             print(f"  ✖ Suite failed: {exc}")
             all_results.append({
@@ -60,7 +59,7 @@ def execute_all_appium_tests() -> None:
                 "timestamp":  time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # Summary
     global_duration_ms = int((time.time() - global_start) * 1000)
     total   = len(all_results)
     passed  = sum(1 for r in all_results if r["status"] == "PASS")
@@ -68,19 +67,19 @@ def execute_all_appium_tests() -> None:
     pass_rate = f"{(passed / total * 100):.1f}" if total > 0 else "0"
 
     print()
-    print("═══════════════════════════════════════════════════════════════════")
-    print("📊 APPIUM TEST SUMMARY")
-    print("═══════════════════════════════════════════════════════════════════")
+    print("===================================================================")
+    print("📊 APPIUM TEST SUMMARY RESULTS")
+    print("===================================================================")
     print(f" Platform          : {PLATFORM.upper()}")
     print(f" Total Tests       : {total}")
-    print(f" Passed            : {passed} ✅")
-    print(f" Failed            : {failed} ❌")
+    print(f" Passed            : {passed} [PASS]")
+    print(f" Failed            : {failed} [FAIL]")
     print(f" Pass Rate         : {pass_rate}%")
     print(f" Duration          : {global_duration_ms / 1000:.2f}s")
-    print("═══════════════════════════════════════════════════════════════════\n")
+    print("===================================================================\n")
 
-    # ── Excel Report ──────────────────────────────────────────────────────────
-    print("📝 Generating Appium Excel Report...")
+    # Excel & JSON Report
+    print("📝 Generating Appium Excel & JSON Reports...")
     reporter = AppiumExcelReporter()
     paths = reporter.generate_report(
         all_results,
@@ -88,10 +87,10 @@ def execute_all_appium_tests() -> None:
         PLATFORM,
     )
 
-    print("✨ Report saved:")
+    print("✨ Report saved successfully:")
     print(f"   📄 {paths['report_path']}")
     print(f"   📄 {paths['latest_report_path']}")
-    print(f"   📊 {paths['json_path']}  ← used by the consolidated HTML report\n")
+    print(f"   📊 {paths['json_path']}  (used by consolidated HTML report)\n")
 
 
 if __name__ == "__main__":

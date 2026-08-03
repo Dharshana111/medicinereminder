@@ -17,14 +17,20 @@ function safeRead(f) {
 function pct(p, t) { return t > 0 ? ((p / t) * 100).toFixed(1) : '0.0'; }
 
 // ── Appium data ───────────────────────────────────────────────────────────────
-const appiumRaw    = safeRead('collected/appium/appium_report_data.json') || [];
+const appiumRaw = safeRead('collected/appium/appium_report_data.json')
+               || safeRead('collected/appium/reports/appium_report_data.json')
+               || safeRead('final_reports/appium_report_data.json')
+               || safeRead('appium_tests/reports/appium_report_data.json') || [];
 const appiumTotal  = appiumRaw.length;
 const appiumPassed = appiumRaw.filter(r => r.status === 'PASS').length;
 const appiumFailed = appiumTotal - appiumPassed;
 
 // ── Selenium data ─────────────────────────────────────────────────────────────
-const selRaw   = safeRead('collected/selenium/selenium_report_data.json')
-              || safeRead('collected/selenium/selenium_Latest.json') || [];
+const selRaw    = safeRead('collected/selenium/selenium_report_data.json')
+               || safeRead('collected/selenium/reports/selenium_report_data.json')
+               || safeRead('final_reports/selenium_report_data.json')
+               || safeRead('selenium_tests/reports/selenium_report_data.json')
+               || safeRead('collected/selenium/selenium_Latest.json') || [];
 const selTotal  = selRaw.length;
 const selPassed = selRaw.filter(r => r.status === 'PASS').length;
 const selFailed = selTotal - selPassed;

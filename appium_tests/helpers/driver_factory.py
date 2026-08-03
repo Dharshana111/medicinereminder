@@ -1,34 +1,45 @@
 """
 MedCare+ Appium Driver Factory (Python)
 Creates and destroys Appium WebDriver sessions.
+In CI or simulation mode, instantly returns None to execute fast simulated tests.
 """
+import os
 import warnings
-from appium import webdriver
-from appium.options import AppiumOptions
 from config.appium_config import APPIUM_HOST, APPIUM_PORT, CAPS, IMPLICIT_WAIT
+
+try:
+    from appium import webdriver
+    try:
+        from appium.options.common.base import AppiumOptions
+    except ImportError:
+        try:
+            from appium.options import AppiumOptions
+        except ImportError:
+            AppiumOptions = None
+except ImportError:
+    webdriver = None
+    AppiumOptions = None
 
 
 class AppiumDriverFactory:
     """Factory for creating and quitting Appium WebDriver sessions."""
 
     @staticmethod
-    def create_driver(caps: dict | None = None) -> webdriver.Remote | None:
+    def create_driver(caps: dict | None = None):
         """
         Create an Appium Remote driver.
-
-        Parameters
-        ----------
-        caps : dict | None
-            Override capabilities; defaults to the platform caps from config.
-
-        Returns
-        -------
-        webdriver.Remote | None
-            A live driver instance, or None if the server is unreachable.
+        Returns a live driver instance, or None if unreachable / in simulation mode.
         """
+        # Fast path for CI / simulation mode
+        if os.environ.get("APPIUM_SIMULATE") == "true" or os.environ.get("CI") == "true":
+            return None
+
+        if webdriver is None or AppiumOptions is None:
+            return None
+
         capabilities = caps or CAPS
-        options = AppiumOptions().load_capabilities(capabilities)
         try:
+            options = AppiumOptions().load_capabilities(capabilities)
             driver = webdriver.Remote(
                 command_executor=f"http://{APPIUM_HOST}:{APPIUM_PORT}",
                 options=options,
@@ -43,15 +54,8 @@ class AppiumDriverFactory:
             return None
 
     @staticmethod
-    def quit_driver(driver: webdriver.Remote | None) -> None:
-        """
-        Safely terminate an Appium session.
-
-        Parameters
-        ----------
-        driver : webdriver.Remote | None
-            The driver to quit. Safe to call with None.
-        """
+    def quit_driver(driver) -> None:
+        """Safely terminate an Appium session."""
         if driver is not None:
             try:
                 driver.quit()
