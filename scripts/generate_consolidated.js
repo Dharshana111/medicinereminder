@@ -33,15 +33,26 @@ const selFailed = selTotal - selPassed;
 function loadMetrics(file) {
   const d = safeRead(file);
   if (!d) return null;
-  const m = d.raw ? d.raw.metrics : d.metrics;
+  const m = d.raw ? d.raw.metrics : (d.metrics || d);
   if (!m) return null;
-  const dur = m.http_req_duration, fail = m.http_req_failed, reqs = m.http_reqs;
+  const dur  = m.http_req_duration;
+  const fail = m.http_req_failed;
+  const reqs = m.http_reqs;
+
+  const totalVal = reqs?.values?.count ?? reqs?.count ?? reqs?.values?.rate ?? 'N/A';
+  const failVal  = fail?.values?.rate ?? fail?.rate ?? fail?.values?.passes ?? null;
+  const failRate = failVal !== null && !isNaN(failVal) ? (Number(failVal) <= 1 ? (Number(failVal) * 100).toFixed(2) + '%' : Number(failVal).toFixed(2) + '%') : 'N/A';
+
+  const avgVal   = dur?.values?.avg ?? dur?.avg ?? null;
+  const p95Val   = dur?.values?.['p(95)'] ?? dur?.['p(95)'] ?? dur?.values?.p95 ?? null;
+  const p99Val   = dur?.values?.['p(99)'] ?? dur?.['p(99)'] ?? dur?.values?.p99 ?? null;
+
   return {
-    total   : reqs ? reqs.values.count                       : 'N/A',
-    failRate: fail ? (fail.values.rate * 100).toFixed(2)+'%' : 'N/A',
-    avg     : dur  ? dur.values.avg.toFixed(1)               : 'N/A',
-    p95     : dur  ? dur.values['p(95)'].toFixed(1)          : 'N/A',
-    p99     : dur  ? dur.values['p(99)'].toFixed(1)          : 'N/A',
+    total   : totalVal !== null ? String(totalVal) : 'N/A',
+    failRate: failRate,
+    avg     : avgVal !== null && !isNaN(avgVal) ? Number(avgVal).toFixed(1) : 'N/A',
+    p95     : p95Val !== null && !isNaN(p95Val) ? Number(p95Val).toFixed(1) : 'N/A',
+    p99     : p99Val !== null && !isNaN(p99Val) ? Number(p99Val).toFixed(1) : 'N/A',
   };
 }
 
