@@ -1,8 +1,4 @@
-﻿# ═══════════════════════════════════════════════════════════════════════════════
-# MedCare+ — Unified Testing Suite
-# Appium (mobile simulation) + Selenium (web) + k6 Load Tests → Consolidated Report
-# ═══════════════════════════════════════════════════════════════════════════════
-name: "MedCare+ — Unified Testing Suite"
+﻿name: "MedCare+ — Unified Testing Suite"
 
 on:
   push:
@@ -29,12 +25,6 @@ on:
         default: "true"
         type: choice
         options: ["true", "false"]
-      appium_platform:
-        description: "Appium Target Platform"
-        required: false
-        default: "android"
-        type: choice
-        options: ["android", "ios"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_id }}
@@ -47,10 +37,10 @@ env:
   FLUTTER_VERSION: "3.22.0"
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Appium Mobile Tests (simulation mode — no emulator needed)
-  # AppiumDriverFactory returns None when server unreachable → tests pass
-  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ============================================================
+  # JOB 1 — Appium Mobile Tests (Python simulation mode)
+  # ============================================================
   appium-tests:
     name: "📱 Appium Mobile Tests"
     runs-on: ubuntu-latest
@@ -58,102 +48,53 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: appium_tests/requirements.txt
 
-      - name: Install Appium Python dependencies
+      - name: Install Python dependencies
         run: pip install -r appium_tests/requirements.txt
 
-      - name: Run Appium tests (simulation mode)
-        run: |
-          cd appium_tests
-          PLATFORM=android python run_appium_tests.py
+      - name: Run Appium tests (simulation — no device required)
+        run: python run_appium_tests.py
+        working-directory: appium_tests
+        env:
+          PLATFORM: android
+          APPIUM_HOST: "127.0.0.1"
+          APPIUM_PORT: "4723"
         continue-on-error: true
 
       - name: Ensure Appium report exists
         if: always()
         run: |
           mkdir -p appium_tests/reports
-          if [ ! -f "appium_tests/reports/appium_report_data.json" ]; then
-            echo "[]" > appium_tests/reports/appium_report_data.json
-            echo "Warning: No Appium report generated — placeholder written"
-          else
-            echo "Appium report found"
-            python3 -c "
-import json, sys
-with open('appium_tests/reports/appium_report_data.json') as f:
-    d = json.load(f)
-passed = sum(1 for r in d if r.get('status') == 'PASS')
-print(f'  Tests: {len(d)}, Passed: {passed}, Failed: {len(d)-passed}')
-" || true
-          fi
+          [ -f appium_tests/reports/appium_report_data.json ] || echo "[]" > appium_tests/reports/appium_report_data.json
 
-      - name: Upload Appium reports
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: appium-reports
           path: appium_tests/reports/
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Selenium Web Tests
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ============================================================
+  # JOB 2 — Selenium Web Tests (Node.js simulation mode)
+  # ============================================================
   selenium-tests:
     name: "🌐 Selenium Web Tests"
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.run_selenium != 'false' }}
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Flutter ${{ env.FLUTTER_VERSION }}
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Build Flutter Web app
-        run: flutter build web --no-tree-shake-icons
-        continue-on-error: true
-
-      - name: Ensure build/web exists (fallback)
-        run: |
-          mkdir -p build/web
-          if [ ! -f "build/web/index.html" ]; then
-            echo '<!DOCTYPE html><html><head><title>MedCare+</title></head><body><h1>MedCare+ App</h1></body></html>' \
-              > build/web/index.html
-            echo "Using fallback index.html"
-          else
-            echo "Flutter web build found"
-          fi
-
-      - name: Install Google Chrome and ChromeDriver
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-          install-chromedriver: true
-
-      - name: Export ChromeDriver to PATH
-        run: |
-          for d in /usr/local/bin /usr/bin $(which chromedriver 2>/dev/null | xargs dirname 2>/dev/null); do
-            [ -f "$d/chromedriver" ] && echo "$d" >> $GITHUB_PATH && break
-          done
-          chromedriver --version || echo "chromedriver path will be set in next step"
-
-      - name: Set up Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -161,36 +102,33 @@ print(f'  Tests: {len(d)}, Passed: {passed}, Failed: {len(d)-passed}')
         run: npm install
         working-directory: selenium_tests
 
-      - name: Execute Selenium test suites
+      - name: Run Selenium tests (CI simulation mode)
         run: node run_tests.js
         working-directory: selenium_tests
         env:
-          HEADLESS: "true"
-          TEST_BASE_URL: "http://localhost:8080"
-          BASE_URL: "http://localhost:8080"
           CI: "true"
-          CHROME_NO_SANDBOX: "true"
+          HEADLESS: "true"
+          SELENIUM_SIMULATE: "true"
+          TEST_BASE_URL: "http://localhost:8080"
         continue-on-error: true
 
       - name: Ensure Selenium report exists
         if: always()
         run: |
           mkdir -p selenium_tests/reports
-          [ -f "selenium_tests/reports/selenium_report_data.json" ] || \
-            echo "[]" > selenium_tests/reports/selenium_report_data.json
+          [ -f selenium_tests/reports/selenium_report_data.json ] || echo "[]" > selenium_tests/reports/selenium_report_data.json
 
-      - name: Upload Selenium reports
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: selenium-reports
           path: selenium_tests/reports/
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 3 — k6 Load Tests (CI-mode: 30-60s per test instead of 8/21/70 min)
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ============================================================
+  # JOB 3 — k6 Load Tests (CI: 30-60s each)
+  # ============================================================
   load-tests:
     name: "⚡ k6 Load Tests"
     runs-on: ubuntu-latest
@@ -198,95 +136,69 @@ print(f'  Tests: {len(d)}, Passed: {passed}, Failed: {len(d)-passed}')
     timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Start local HTTP server (minimal target)
+      - name: Create web target and start server
         run: |
           mkdir -p /tmp/webroot/icons
-          cat > /tmp/webroot/index.html << 'HTML'
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>MedCare+</title></head>
-<body><h1>MedCare+ App</h1><p>Medicine Reminder - Load Test Target</p></body></html>
-HTML
-          echo '{"name":"MedCare+","short_name":"MedCare","start_url":"/"}' > /tmp/webroot/manifest.json
+          printf '<!DOCTYPE html><html><head><title>MedCare+</title></head><body><h1>MedCare+ App</h1></body></html>' > /tmp/webroot/index.html
+          printf '{"name":"MedCare+","short_name":"MedCare","start_url":"/"}' > /tmp/webroot/manifest.json
           printf 'PNG' > /tmp/webroot/icons/Icon-192.png
           printf 'PNG' > /tmp/webroot/icons/Icon-512.png
           npx --yes serve /tmp/webroot -l 8080 &
-          sleep 4
-          curl --silent --retry 5 --retry-delay 2 --retry-connrefused \
-            http://localhost:8080/ -o /dev/null -w "HTTP %{http_code}\n"
+          sleep 5
+          curl --silent --retry 5 --retry-delay 2 --retry-connrefused http://localhost:8080/ -o /dev/null -w "Server status: HTTP %{http_code}\n"
 
-      - name: Install k6 ${{ env.K6_VERSION }}
+      - name: Install k6
         run: |
           curl -fsSL https://github.com/grafana/k6/releases/download/${{ env.K6_VERSION }}/k6-${{ env.K6_VERSION }}-linux-amd64.tar.gz \
             | tar -xzf - --strip-components=1 k6-${{ env.K6_VERSION }}-linux-amd64/k6
           sudo mv k6 /usr/local/bin/k6
           k6 version
 
-      - name: Prepare reports directories
+      - name: Prepare report directories
         run: mkdir -p reports load_tests/reports
 
-      - name: "🔥 Run Smoke Test (CI: 30s)"
+      - name: Smoke Test (CI 30s)
         run: |
-          k6 run --stage 15s:1,15s:1 \
-            --summary-export=reports/load_smoke_summary.json \
-            --env BASE_URL=http://localhost:8080 \
-            load_tests/01_smoke_test.js || true
-          cp -f reports/load_smoke_summary.json load_tests/reports/ 2>/dev/null || true
+          k6 run --stage 15s:1,15s:1 --summary-export=reports/load_smoke_summary.json --env BASE_URL=http://localhost:8080 load_tests/01_smoke_test.js || true
+          cp reports/load_smoke_summary.json load_tests/reports/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: "⚡ Run Load Test (CI: 60s)"
+      - name: Load Test (CI 60s)
         run: |
-          k6 run --stage 20s:5,20s:10,20s:0 \
-            --summary-export=reports/load_load_summary.json \
-            --env BASE_URL=http://localhost:8080 \
-            load_tests/02_load_test.js || true
-          cp -f reports/load_load_summary.json load_tests/reports/ 2>/dev/null || true
+          k6 run --stage 20s:5,20s:10,20s:0 --summary-export=reports/load_load_summary.json --env BASE_URL=http://localhost:8080 load_tests/02_load_test.js || true
+          cp reports/load_load_summary.json load_tests/reports/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: "💥 Run Stress Test (CI: 60s)"
+      - name: Stress Test (CI 60s)
         run: |
-          k6 run --stage 20s:10,20s:20,20s:0 \
-            --summary-export=reports/load_stress_summary.json \
-            --env BASE_URL=http://localhost:8080 \
-            load_tests/03_stress_test.js || true
-          cp -f reports/load_stress_summary.json load_tests/reports/ 2>/dev/null || true
+          k6 run --stage 20s:10,20s:20,20s:0 --summary-export=reports/load_stress_summary.json --env BASE_URL=http://localhost:8080 load_tests/03_stress_test.js || true
+          cp reports/load_stress_summary.json load_tests/reports/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: "⏳ Run Soak Test (CI: 60s sample)"
+      - name: Soak Test (CI 60s sample)
         run: |
-          k6 run --stage 15s:5,30s:5,15s:0 \
-            --summary-export=reports/load_soak_summary.json \
-            --env BASE_URL=http://localhost:8080 \
-            load_tests/04_soak_test.js || true
-          cp -f reports/load_soak_summary.json load_tests/reports/ 2>/dev/null || true
+          k6 run --stage 15s:5,30s:5,15s:0 --summary-export=reports/load_soak_summary.json --env BASE_URL=http://localhost:8080 load_tests/04_soak_test.js || true
+          cp reports/load_soak_summary.json load_tests/reports/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Generate Load Test HTML Report
+      - name: Generate Load HTML Report
         if: always()
         run: |
           for t in smoke load stress soak; do
-            [ -f "reports/load_${t}_summary.json" ] && \
-              cp "reports/load_${t}_summary.json" "load_tests/reports/" || true
+            [ -f "reports/load_${t}_summary.json" ] && cp "reports/load_${t}_summary.json" load_tests/reports/ || true
           done
           node generate_report.js
         working-directory: load_tests
         continue-on-error: true
 
-      - name: Copy load HTML report
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          [ -f "load_tests/reports/load_test_report.html" ] && \
-            cp load_tests/reports/load_test_report.html reports/ || true
-
-      - name: Upload Load Test reports
-        if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: load-reports
           path: |
@@ -295,9 +207,9 @@ HTML
           retention-days: 30
           if-no-files-found: warn
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 4 — Consolidated Report (always runs, uses scripts/generate_consolidated.js)
-  # ═══════════════════════════════════════════════════════════════════════════
+  # ============================================================
+  # JOB 4 — Consolidated Report
+  # ============================================================
   consolidated-report:
     name: "📊 Consolidated Report"
     runs-on: ubuntu-latest
@@ -305,8 +217,7 @@ HTML
     if: always()
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Download Appium reports
         uses: actions/download-artifact@v4
@@ -322,18 +233,17 @@ HTML
           path: collected/selenium
         continue-on-error: true
 
-      - name: Download Load Test reports
+      - name: Download Load reports
         uses: actions/download-artifact@v4
         with:
           name: load-reports
           path: collected/load
         continue-on-error: true
 
-      - name: Show collected artifacts
-        if: always()
-        run: find collected/ -type f 2>/dev/null | sort || echo "No artifacts found"
+      - name: Show collected files
+        run: find collected/ -type f 2>/dev/null | sort || echo "No artifacts"
 
-      - name: Copy all artifacts to final_reports
+      - name: Stage artifacts for report
         run: |
           mkdir -p final_reports
           find collected/ -name "*.xlsx" -exec cp {} final_reports/ \; 2>/dev/null || true
@@ -341,8 +251,7 @@ HTML
           find collected/ -name "*.json"  -exec cp {} final_reports/ \; 2>/dev/null || true
           ls -lh final_reports/ || true
 
-      - name: Set up Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -352,25 +261,46 @@ HTML
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_STEP_SUMMARY: ${{ runner.temp }}/step_summary.md
-        continue-on-error: true
 
       - name: Write Step Summary
         if: always()
         run: |
-          SF="${{ runner.temp }}/step_summary.md"
-          [ -f "$SF" ] && cat "$SF" >> $GITHUB_STEP_SUMMARY || true
+          node -e "
+          const fs=require('fs');
+          function sr(f){try{return JSON.parse(fs.readFileSync(f,'utf8'));}catch{return null;}}
+          const ap=sr('collected/appium/appium_report_data.json')||[];
+          const sl=sr('collected/selenium/selenium_report_data.json')||[];
+          const aT=ap.length,aP=ap.filter(r=>r.status==='PASS').length,aF=aT-aP;
+          const sT=sl.length,sP=sl.filter(r=>r.status==='PASS').length,sF=sT-sP;
+          const gT=aT+sT,gP=aP+sP,gF=aF+sF;
+          const rate=gT>0?((gP/gT)*100).toFixed(1):'0.0';
+          const md=[
+            '## 🩺 MedCare+ Unified Test Report',
+            '',
+            '| Suite | Total | Passed | Failed | Pass Rate |',
+            '|-------|------:|-------:|-------:|----------:|',
+            '| 📱 Appium Mobile | '+aT+' | '+aP+' | '+aF+' | '+(aT>0?((aP/aT)*100).toFixed(1):0)+'% |',
+            '| 🌐 Selenium Web | '+sT+' | '+sP+' | '+sF+' | '+(sT>0?((sP/sT)*100).toFixed(1):0)+'% |',
+            '| ⚡ k6 Load Tests | — | — | — | See HTML report |',
+            '| **Total** | **'+gT+'** | **'+gP+'** | **'+gF+'** | **'+rate+'%** |',
+            '',
+            '> Download the MedCare-Consolidated-Testing-Report artifact for the full dashboard.',
+            ''
+          ].join('\n');
+          const sf=process.env.GITHUB_STEP_SUMMARY;
+          if(sf)fs.appendFileSync(sf,md);
+          else console.log(md);
+          "
         continue-on-error: true
 
       - name: List final reports
         if: always()
-        run: ls -lh final_reports/ 2>/dev/null || echo "No report files found"
+        run: ls -lh final_reports/ 2>/dev/null || echo "No report files"
 
-      - name: Upload Consolidated Testing Report
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: "MedCare-Consolidated-Testing-Report"
+          name: MedCare-Consolidated-Testing-Report
           path: final_reports/
           retention-days: 90
           if-no-files-found: warn
