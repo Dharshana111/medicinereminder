@@ -1,4 +1,4 @@
-﻿name: "MedCare+ — Unified Testing Suite"
+name: "MedCare+ — Unified Testing Suite"
 
 on:
   push:
@@ -262,36 +262,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
 
-      - name: Write Step Summary
-        if: always()
-        run: |
-          node -e "
-          const fs=require('fs');
-          function sr(f){try{return JSON.parse(fs.readFileSync(f,'utf8'));}catch{return null;}}
-          const ap=sr('collected/appium/appium_report_data.json')||[];
-          const sl=sr('collected/selenium/selenium_report_data.json')||[];
-          const aT=ap.length,aP=ap.filter(r=>r.status==='PASS').length,aF=aT-aP;
-          const sT=sl.length,sP=sl.filter(r=>r.status==='PASS').length,sF=sT-sP;
-          const gT=aT+sT,gP=aP+sP,gF=aF+sF;
-          const rate=gT>0?((gP/gT)*100).toFixed(1):'0.0';
-          const md=[
-            '## 🩺 MedCare+ Unified Test Report',
-            '',
-            '| Suite | Total | Passed | Failed | Pass Rate |',
-            '|-------|------:|-------:|-------:|----------:|',
-            '| 📱 Appium Mobile | '+aT+' | '+aP+' | '+aF+' | '+(aT>0?((aP/aT)*100).toFixed(1):0)+'% |',
-            '| 🌐 Selenium Web | '+sT+' | '+sP+' | '+sF+' | '+(sT>0?((sP/sT)*100).toFixed(1):0)+'% |',
-            '| ⚡ k6 Load Tests | — | — | — | See HTML report |',
-            '| **Total** | **'+gT+'** | **'+gP+'** | **'+gF+'** | **'+rate+'%** |',
-            '',
-            '> Download the MedCare-Consolidated-Testing-Report artifact for the full dashboard.',
-            ''
-          ].join('\n');
-          const sf=process.env.GITHUB_STEP_SUMMARY;
-          if(sf)fs.appendFileSync(sf,md);
-          else console.log(md);
-          "
-        continue-on-error: true
+
 
       - name: List final reports
         if: always()
