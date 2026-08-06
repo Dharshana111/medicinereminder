@@ -78,9 +78,10 @@ class NotificationService {
               ?.requestNotificationsPermission();
 
           // Request exact alarm permissions for Android 12+
-          if (await Permission.scheduleExactAlarm.isDenied) {
-            await Permission.scheduleExactAlarm.request();
-          }
+          await _notifications
+              .resolvePlatformSpecificImplementation<
+                  AndroidFlutterLocalNotificationsPlugin>()
+              ?.requestExactAlarmsPermission();
         }
       }
     } catch (e) {
@@ -187,7 +188,11 @@ class NotificationService {
       // Ensure we have exact alarm permission before using exact modes to avoid crashes or failures on Android 13/14+
       bool hasExactAlarmPermission = false;
       if (Platform.isAndroid) {
-        hasExactAlarmPermission = await Permission.scheduleExactAlarm.isGranted;
+        hasExactAlarmPermission = await _notifications
+                .resolvePlatformSpecificImplementation<
+                    AndroidFlutterLocalNotificationsPlugin>()
+                ?.canScheduleExactNotifications() ??
+            false;
       }
       final scheduleMode = hasExactAlarmPermission
           ? AndroidScheduleMode.exactAllowWhileIdle
@@ -200,7 +205,8 @@ class NotificationService {
         scheduledDate,
         notificationDetails,
         androidScheduleMode: scheduleMode,
-
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.time,
         payload: medicine.id,
       );

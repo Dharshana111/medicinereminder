@@ -440,7 +440,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: _medicines.length,
-              separatorBuilder: (_, _) =>
+              separatorBuilder: (_, __) =>
                   const SizedBox(height: AppTheme.spacingSm),
               itemBuilder: (context, index) {
                 final medicine = _medicines[index];
